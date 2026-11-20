@@ -1,0 +1,46 @@
+USE Soporte_Patitos;
+GO
+
+IF COL_LENGTH('Empleados', 'Apellido_Paterno') IS NULL
+    ALTER TABLE Empleados ADD Apellido_Paterno VARCHAR(80) NULL;
+IF COL_LENGTH('Empleados', 'Apellido_Materno') IS NULL
+    ALTER TABLE Empleados ADD Apellido_Materno VARCHAR(80) NULL;
+IF COL_LENGTH('Empleados', 'Primer_Nombre') IS NULL
+    ALTER TABLE Empleados ADD Primer_Nombre VARCHAR(80) NULL;
+IF COL_LENGTH('Empleados', 'Segundo_Nombre') IS NULL
+    ALTER TABLE Empleados ADD Segundo_Nombre VARCHAR(80) NULL;
+IF COL_LENGTH('Empleados', 'Fecha_Nacimiento') IS NULL
+    ALTER TABLE Empleados ADD Fecha_Nacimiento DATE NULL;
+IF COL_LENGTH('Empleados', 'Fotografia_Url') IS NULL
+    ALTER TABLE Empleados ADD Fotografia_Url VARCHAR(255) NULL;
+IF COL_LENGTH('Empleados', 'Pais_Demografico') IS NULL
+    ALTER TABLE Empleados ADD Pais_Demografico VARCHAR(80) NULL;
+IF COL_LENGTH('Empleados', 'Estado_Civil') IS NULL
+    ALTER TABLE Empleados ADD Estado_Civil VARCHAR(50) NULL;
+IF COL_LENGTH('Empleados', 'Genero') IS NULL
+    ALTER TABLE Empleados ADD Genero VARCHAR(30) NULL;
+IF COL_LENGTH('Empleados', 'Nivel_Educacion_Superior') IS NULL
+    ALTER TABLE Empleados ADD Nivel_Educacion_Superior VARCHAR(100) NULL;
+IF COL_LENGTH('Empleados', 'Pais_Identificacion') IS NULL
+    ALTER TABLE Empleados ADD Pais_Identificacion VARCHAR(80) NULL;
+IF COL_LENGTH('Empleados', 'Tipo_Identificador_Nacional') IS NULL
+    ALTER TABLE Empleados ADD Tipo_Identificador_Nacional VARCHAR(100) NULL;
+IF COL_LENGTH('Empleados', 'Identificador_Nacional') IS NULL
+    ALTER TABLE Empleados ADD Identificador_Nacional VARCHAR(50) NULL;
+IF COL_LENGTH('Empleados', 'Pais_Seguridad_Social') IS NULL
+    ALTER TABLE Empleados ADD Pais_Seguridad_Social VARCHAR(80) NULL;
+IF COL_LENGTH('Empleados', 'Tipo_Seguridad_Social') IS NULL
+    ALTER TABLE Empleados ADD Tipo_Seguridad_Social VARCHAR(100) NULL;
+IF COL_LENGTH('Empleados', 'Identificador_Seguridad_Social') IS NULL
+    ALTER TABLE Empleados ADD Identificador_Seguridad_Social VARCHAR(50) NULL;
+IF COL_LENGTH('Empleados', 'Mensaje_Discapacidad') IS NULL
+    ALTER TABLE Empleados ADD Mensaje_Discapacidad NVARCHAR(255) NULL;
+GO
+
+UPDATE Empleados
+SET
+    Identificador_Nacional = ISNULL(Identificador_Nacional, Cedula),
+    Identificador_Seguridad_Social = ISNULL(Identificador_Seguridad_Social, Cedula),
+    Primer_Nombre = ISNULL(Primer_Nombre, PARSENAME(REPLACE(Nombre_Empleado, ' ', '.'), 1)),
+    Segundo_Nombre = ISNULL(Segundo_Nombre, PARSENAME(REPLACE(Nombre_Empleado, ' ', '.'), 2));
+GO

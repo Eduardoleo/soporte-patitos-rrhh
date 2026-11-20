@@ -1,0 +1,6 @@
+@SoportePatitosS.A_HostAddress = http://localhost:5067
+
+GET {{SoportePatitosS.A_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

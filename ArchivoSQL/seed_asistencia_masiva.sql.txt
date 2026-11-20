@@ -1,0 +1,224 @@
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+SET DATEFIRST 1;
+
+BEGIN TRY
+    BEGIN TRAN;
+
+    DECLARE @Hoy DATE = CAST(GETDATE() AS DATE);
+
+    DECLARE @TipoAusenciaDefault INT = (
+        SELECT TOP 1 Tipo_Ausencia_ID
+        FROM Tipos_Ausencia
+        ORDER BY CASE WHEN UPPER(Nombre_Ausencia) LIKE '%VACAC%' THEN 0 ELSE 1 END, Tipo_Ausencia_ID
+    );
+
+    IF @TipoAusenciaDefault IS NULL
+    BEGIN
+        RAISERROR('No hay tipos de ausencia configurados en Tipos_Ausencia.', 16, 1);
+    END;
+
+    DECLARE @RrhhAprobadorId INT = (
+        SELECT TOP 1 e.Empleado_ID
+        FROM Empleados e
+        INNER JOIN Perfiles p ON p.Perfil_ID = e.Perfil_ID
+        WHERE UPPER(ISNULL(p.Nombre_Perfil, '')) LIKE '%RRHH%'
+           OR UPPER(ISNULL(p.Nombre_Perfil, '')) LIKE '%RECURSOS%'
+        ORDER BY e.Empleado_ID
+    );
+
+    DECLARE @EmpleadoId INT;
+    DECLARE @FechaIngreso DATE;
+    DECLARE @HoraEntradaProgramada TIME;
+    DECLARE @HoraSalidaProgramada TIME;
+
+    DECLARE cur CURSOR LOCAL FAST_FORWARD FOR
+        SELECT e.Empleado_ID, CAST(e.Fecha_Ingreso AS DATE), h.Hora_Entrada, h.Hora_Salida
+        FROM Empleados e
+        LEFT JOIN Horarios h ON h.Horario_ID = e.Horario_ID
+        ORDER BY e.Empleado_ID;
+
+    OPEN cur;
+    FETCH NEXT FROM cur INTO @EmpleadoId, @FechaIngreso, @HoraEntradaProgramada, @HoraSalidaProgramada;
+
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+        DECLARE @FechaInicioCarga DATE = CASE
+            WHEN @EmpleadoId % 2 = 0 THEN DATEADD(DAY, -9, @FechaIngreso)   -- Ej: empleado 2, entra 29/08 -> carga desde 20/08
+            ELSE DATEADD(DAY, 1, @FechaIngreso)                             -- Ej: empleado 9, entra 05/09 -> carga desde 06/09
+        END;
+
+        IF @FechaInicioCarga > @Hoy
+            SET @FechaInicioCarga = @Hoy;
+
+        DECLARE @Dia DATE = @FechaInicioCarga;
+
+        WHILE @Dia <= @Hoy
+        BEGIN
+            -- Solo Lunes a Viernes
+            IF DATEPART(WEEKDAY, @Dia) BETWEEN 1 AND 5
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM Asistencia a WHERE a.Empleado_ID = @EmpleadoId AND a.Fecha = @Dia
+                )
+                BEGIN
+                    DECLARE @Seed INT = ABS(CHECKSUM(CONCAT(@EmpleadoId, '|', CONVERT(VARCHAR(8), @Dia, 112))));
+                    DECLARE @EsAusencia BIT = CASE WHEN (@Seed % 100) < 9 THEN 1 ELSE 0 END; -- ~9% ausencias
+
+                    IF @EsAusencia = 1
+                    BEGIN
+                        INSERT INTO Asistencia
+                        (
+                            Empleado_ID,
+                            Fecha,
+                            Fecha_Hora_Entrada,
+                            Fecha_Hora_Salida,
+                            Estado_Asistencia,
+                            Observaciones,
+                            Fecha_Registro
+                        )
+                        VALUES
+                        (
+                            @EmpleadoId,
+                            @Dia,
+                            NULL,
+                            NULL,
+                            'AUSENTE',
+                            N'{"MotivoAusencia":"Ausencia planificada automática (seed)","MotivoTardanza":null}',
+                            GETDATE()
+                        );
+                    END
+                    ELSE
+                    BEGIN
+                        DECLARE @HoraEntradaBase TIME = ISNULL(@HoraEntradaProgramada, '08:00');
+                        DECLARE @HoraSalidaBase TIME = ISNULL(@HoraSalidaProgramada, '17:00');
+
+                        DECLARE @MinTardia INT = CASE
+                            WHEN (@Seed % 100) < 24 THEN 5 + (@Seed % 31)   -- entre 5 y 35 min tarde
+                            ELSE (@Seed % 4)                                 -- puntual o 0-3 min
+                        END;
+
+                        DECLARE @MinExtra INT = CASE
+                            WHEN (@Seed % 100) < 30 THEN 20 + (@Seed % 121) -- entre 20 y 140 min extra
+                            ELSE (@Seed % 12)                                -- normal
+                        END;
+
+                        DECLARE @Entrada DATETIME = DATEADD(MINUTE, @MinTardia, CAST(CONCAT(CONVERT(VARCHAR(10), @Dia, 120), ' ', CONVERT(VARCHAR(8), @HoraEntradaBase, 108)) AS DATETIME));
+                        DECLARE @Salida DATETIME = DATEADD(MINUTE, @MinExtra, CAST(CONCAT(CONVERT(VARCHAR(10), @Dia, 120), ' ', CONVERT(VARCHAR(8), @HoraSalidaBase, 108)) AS DATETIME));
+
+                        IF @Salida <= @Entrada
+                            SET @Salida = DATEADD(HOUR, 8, @Entrada);
+
+                        DECLARE @SalidaAlmuerzo DATETIME = DATEADD(HOUR, 4, @Entrada);
+                        DECLARE @RegresoAlmuerzo DATETIME = DATEADD(MINUTE, 45, @SalidaAlmuerzo);
+
+                        DECLARE @MotivoTardia NVARCHAR(300) = CASE
+                            WHEN @MinTardia > 20 THEN 'Tránsito pesado / incidente vial (seed)'
+                            ELSE NULL
+                        END;
+
+                        DECLARE @Observaciones NVARCHAR(MAX) = CONCAT(
+                            '{',
+                            '"SalidaAlmuerzo":"', CONVERT(VARCHAR(19), @SalidaAlmuerzo, 126), '",',
+                            '"RegresoAlmuerzo":"', CONVERT(VARCHAR(19), @RegresoAlmuerzo, 126), '",',
+                            '"MotivoTardanza":', CASE WHEN @MotivoTardia IS NULL THEN 'null' ELSE CONCAT('"', @MotivoTardia, '"') END, ',',
+                            '"MotivoAusencia":null',
+                            '}'
+                        );
+
+                        INSERT INTO Asistencia
+                        (
+                            Empleado_ID,
+                            Fecha,
+                            Fecha_Hora_Entrada,
+                            Fecha_Hora_Salida,
+                            Estado_Asistencia,
+                            Observaciones,
+                            Fecha_Registro
+                        )
+                        VALUES
+                        (
+                            @EmpleadoId,
+                            @Dia,
+                            @Entrada,
+                            @Salida,
+                            'PRESENTE',
+                            @Observaciones,
+                            GETDATE()
+                        );
+                    END
+                END
+            END
+
+            SET @Dia = DATEADD(DAY, 1, @Dia);
+        END
+
+        -- Crear pocas solicitudes de ausencia completadas por empleado (0..2)
+        DECLARE @CantidadAusencias INT = @EmpleadoId % 3;
+        DECLARE @i INT = 1;
+
+        WHILE @i <= @CantidadAusencias
+        BEGIN
+            DECLARE @OffsetDias INT = 10 + (@EmpleadoId % 17) + (@i * 21);
+            DECLARE @FechaAusenciaInicio DATE = DATEADD(DAY, @OffsetDias, @FechaInicioCarga);
+            DECLARE @FechaAusenciaFin DATE = DATEADD(DAY, CASE WHEN @i % 2 = 0 THEN 1 ELSE 0 END, @FechaAusenciaInicio);
+
+            IF @FechaAusenciaInicio <= @Hoy
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM Solicitudes_Ausencia s
+                    WHERE s.Empleado_ID = @EmpleadoId
+                      AND s.Fecha_Inicio = @FechaAusenciaInicio
+                      AND s.Tipo_Ausencia_ID = @TipoAusenciaDefault
+                )
+                BEGIN
+                    INSERT INTO Solicitudes_Ausencia
+                    (
+                        Empleado_ID,
+                        Tipo_Ausencia_ID,
+                        Fecha_Inicio,
+                        Fecha_Fin,
+                        Motivo,
+                        Comentarios,
+                        Estado_Solicitud,
+                        Fecha_Solicitud,
+                        Aprobador_ID,
+                        Fecha_Aprobacion
+                    )
+                    VALUES
+                    (
+                        @EmpleadoId,
+                        @TipoAusenciaDefault,
+                        @FechaAusenciaInicio,
+                        @FechaAusenciaFin,
+                        'Ausencia de prueba (seed masivo)',
+                        'Registro generado automáticamente para pruebas funcionales.',
+                        'APROBADA',
+                        DATEADD(DAY, -3, @FechaAusenciaInicio),
+                        @RrhhAprobadorId,
+                        DATEADD(DAY, -1, @FechaAusenciaInicio)
+                    );
+                END
+            END
+
+            SET @i += 1;
+        END
+
+        FETCH NEXT FROM cur INTO @EmpleadoId, @FechaIngreso, @HoraEntradaProgramada, @HoraSalidaProgramada;
+    END
+
+    CLOSE cur;
+    DEALLOCATE cur;
+
+    COMMIT TRAN;
+
+    PRINT 'Seed de asistencia masiva aplicado correctamente (entradas/salidas/tardías/extras/ausencias).';
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0
+        ROLLBACK TRAN;
+
+    PRINT ERROR_MESSAGE();
+    THROW;
+END CATCH;

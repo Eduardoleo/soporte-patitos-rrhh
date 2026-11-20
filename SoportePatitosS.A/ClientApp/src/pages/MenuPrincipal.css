@@ -1,0 +1,52 @@
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Colores corporativos */
+:root {
+    --color-primary: #00A8CC;
+    --color-secondary: #E0E0E0;
+    --color-text: #000;
+    --color-text-secondary: #666;
+    --color-text-light: #999;
+    --color-background: #fff;
+    --color-border: #E0E0E0;
+}
+
+body {
+    background-color: #fff;
+    color: #000;
+}
+
+/* Espacios adecuados */
+.MuiContainer-root {
+    padding-top: 0;
+    padding-bottom: 0;
+}
+
+/* Estilos generales */
+body {
+    font-family: 'Segoe UI', 'Roboto', sans-serif;
+    color: var(--color-text);
+}
+
+/* Aumentar espacios */
+.MuiGrid-root {
+    margin: 0;
+    width: 100%;
+}
+
+.MuiCard-root {
+    transition: all 0.3s ease;
+}
+
+.MuiPaper-root {
+    box-shadow: none;
+}

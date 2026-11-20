@@ -1,0 +1,37 @@
+-- Script para agregar tabla de control de sesiones/tokens
+-- Ejecutar en la base de datos antes de usar la autenticación JWT
+
+BEGIN TRY
+    BEGIN TRAN;
+
+    IF OBJECT_ID('dbo.SesionesActivas', 'U') IS NULL
+    BEGIN
+        CREATE TABLE dbo.SesionesActivas (
+            Sesion_ID INT PRIMARY KEY IDENTITY(1,1),
+            Usuario_ID INT NOT NULL,
+            Token_Hash VARCHAR(MAX) NOT NULL,
+            Fecha_Creacion DATETIME2(0) NOT NULL DEFAULT GETDATE(),
+            Fecha_Expiracion DATETIME2(0) NOT NULL,
+            Fecha_Ultimo_Acceso DATETIME2(0) NOT NULL DEFAULT GETDATE(),
+            Direccion_IP VARCHAR(50),
+            Navegador VARCHAR(200),
+            Activa BIT NOT NULL DEFAULT 1,
+            Razon_Cierre VARCHAR(100),
+            CONSTRAINT FK_SesionesActivas_Usuarios FOREIGN KEY (Usuario_ID) REFERENCES Usuarios(Usuario_ID) ON DELETE CASCADE
+        );
+        
+        CREATE INDEX IX_SesionesActivas_UsuarioID ON dbo.SesionesActivas(Usuario_ID);
+        CREATE INDEX IX_SesionesActivas_Activa ON dbo.SesionesActivas(Activa);
+        CREATE INDEX IX_SesionesActivas_Expiracion ON dbo.SesionesActivas(Fecha_Expiracion);
+    END;
+
+    PRINT 'Tabla SesionesActivas creada exitosamente';
+
+    COMMIT TRAN;
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0
+        ROLLBACK TRAN;
+    PRINT 'Error: ' + ERROR_MESSAGE();
+    THROW;
+END CATCH;

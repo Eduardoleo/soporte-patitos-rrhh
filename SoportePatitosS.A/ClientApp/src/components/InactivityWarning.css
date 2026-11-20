@@ -1,0 +1,115 @@
+.inactivity-warning-container {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 9999;
+    animation: slideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateY(20px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.inactivity-warning-card {
+    background-color: #0B0B0B;
+    color: #FFFFFF;
+    padding: 20px 24px;
+    border: 1px solid #1E293B;
+    border-radius: 8px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+    min-width: 340px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.warning-icon {
+    display: flex;
+    align-items: center;
+    color: #FDB913;
+    animation: pulse 2s infinite ease-in-out;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.7;
+    }
+}
+
+.warning-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.inactivity-warning-card h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+.inactivity-warning-card p {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.5;
+    color: #cbd5e1;
+}
+
+.inactivity-warning-card p strong {
+    color: #FFFFFF;
+    font-weight: 600;
+}
+
+.warning-hint {
+    font-size: 13px !important;
+    color: #94a3b8 !important;
+}
+
+.warning-progress {
+    margin-top: 4px;
+    height: 4px;
+    background-color: #1E293B;
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.progress-bar {
+    height: 100%;
+    background-color: #FDB913;
+    width: 100%;
+    animation: countdown 60s linear;
+}
+
+@keyframes countdown {
+    from {
+        width: 100%;
+    }
+    to {
+        width: 0%;
+    }
+}
+
+@media (max-width: 480px) {
+    .inactivity-warning-container {
+        bottom: 16px;
+        right: 16px;
+        left: 16px;
+    }
+
+    .inactivity-warning-card {
+        min-width: unset;
+        width: 100%;
+        box-sizing: border-box;
+    }
+}

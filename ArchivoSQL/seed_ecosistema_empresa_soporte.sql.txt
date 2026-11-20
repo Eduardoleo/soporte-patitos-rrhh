@@ -1,0 +1,530 @@
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+
+BEGIN TRY
+    BEGIN TRAN;
+
+    /* ==============================
+       CATÁLOGOS BASE
+    ============================== */
+
+    IF NOT EXISTS (SELECT 1 FROM Perfiles WHERE Nombre_Perfil = 'GERENTE_GENERAL')
+        INSERT INTO Perfiles (Nombre_Perfil, Descripcion) VALUES ('GERENTE_GENERAL', 'Gerente General de la organización');
+
+    IF NOT EXISTS (SELECT 1 FROM Perfiles WHERE Nombre_Perfil = 'GERENTE')
+        INSERT INTO Perfiles (Nombre_Perfil, Descripcion) VALUES ('GERENTE', 'Gerente de gerencia funcional');
+
+    IF NOT EXISTS (SELECT 1 FROM Perfiles WHERE Nombre_Perfil = 'JEFE_AREA')
+        INSERT INTO Perfiles (Nombre_Perfil, Descripcion) VALUES ('JEFE_AREA', 'Jefe de área especializada');
+
+    IF NOT EXISTS (SELECT 1 FROM Perfiles WHERE Nombre_Perfil = 'EMPLEADO_AREA')
+        INSERT INTO Perfiles (Nombre_Perfil, Descripcion) VALUES ('EMPLEADO_AREA', 'Empleado operativo de área');
+
+    IF NOT EXISTS (SELECT 1 FROM Horarios WHERE Nombre_Horario = 'Soporte Diurno (08-17)')
+        INSERT INTO Horarios (Nombre_Horario, Hora_Entrada, Hora_Salida, Descripcion)
+        VALUES ('Soporte Diurno (08-17)', '08:00', '17:00', 'Lunes a Viernes');
+
+    IF NOT EXISTS (SELECT 1 FROM Horarios WHERE Nombre_Horario = 'Soporte Extendido (09-18)')
+        INSERT INTO Horarios (Nombre_Horario, Hora_Entrada, Hora_Salida, Descripcion)
+        VALUES ('Soporte Extendido (09-18)', '09:00', '18:00', 'Lunes a Viernes');
+
+    IF NOT EXISTS (SELECT 1 FROM Horarios WHERE Nombre_Horario = 'Soporte Tarde (10-19)')
+        INSERT INTO Horarios (Nombre_Horario, Hora_Entrada, Hora_Salida, Descripcion)
+        VALUES ('Soporte Tarde (10-19)', '10:00', '19:00', 'Lunes a Viernes');
+
+    DECLARE @PerGerenteGeneral INT = (SELECT Perfil_ID FROM Perfiles WHERE Nombre_Perfil = 'GERENTE_GENERAL');
+    DECLARE @PerGerente INT = (SELECT Perfil_ID FROM Perfiles WHERE Nombre_Perfil = 'GERENTE');
+    DECLARE @PerJefeArea INT = (SELECT Perfil_ID FROM Perfiles WHERE Nombre_Perfil = 'JEFE_AREA');
+    DECLARE @PerEmpleado INT = (SELECT Perfil_ID FROM Perfiles WHERE Nombre_Perfil = 'EMPLEADO_AREA');
+
+    DECLARE @HorarioDiurno INT = (SELECT Horario_ID FROM Horarios WHERE Nombre_Horario = 'Soporte Diurno (08-17)');
+    DECLARE @HorarioExtendido INT = (SELECT Horario_ID FROM Horarios WHERE Nombre_Horario = 'Soporte Extendido (09-18)');
+    DECLARE @HorarioTarde INT = (SELECT Horario_ID FROM Horarios WHERE Nombre_Horario = 'Soporte Tarde (10-19)');
+
+    /* ==============================
+       DEPARTAMENTOS (GERENCIAS + ÁREAS)
+    ============================== */
+
+    DECLARE @Departamentos TABLE (Nombre VARCHAR(100));
+    INSERT INTO @Departamentos (Nombre)
+    VALUES
+    ('Gerencia de Ingeniería de Software'),
+    ('Gerencia de Soporte Operativo'),
+    ('Gerencia de Infraestructura y Seguridad'),
+    ('Gerencia de Producto y Servicios'),
+    ('Área Backend'),
+    ('Área Frontend'),
+    ('Área QA y Automatización'),
+    ('Área Soporte N1'),
+    ('Área Soporte N2'),
+    ('Área DevOps'),
+    ('Área Ciberseguridad'),
+    ('Área Implementación'),
+    ('Área Éxito del Cliente');
+
+    INSERT INTO Departamentos (Nombre_Departamento)
+    SELECT d.Nombre
+    FROM @Departamentos d
+    WHERE NOT EXISTS (
+        SELECT 1 FROM Departamentos x WHERE x.Nombre_Departamento = d.Nombre
+    );
+
+    /* ==============================
+       TABLAS DE APOYO DE RELACIONES
+    ============================== */
+
+    IF OBJECT_ID('dbo.Gerencia_Area_Mapeo', 'U') IS NULL
+    BEGIN
+        CREATE TABLE dbo.Gerencia_Area_Mapeo (
+            Gerencia_Departamento_ID INT NOT NULL,
+            Area_Departamento_ID INT NOT NULL,
+            CONSTRAINT PK_Gerencia_Area_Mapeo PRIMARY KEY (Gerencia_Departamento_ID, Area_Departamento_ID),
+            CONSTRAINT FK_GAM_Gerencia FOREIGN KEY (Gerencia_Departamento_ID) REFERENCES Departamentos(Departamento_ID),
+            CONSTRAINT FK_GAM_Area FOREIGN KEY (Area_Departamento_ID) REFERENCES Departamentos(Departamento_ID)
+        );
+    END;
+
+    IF OBJECT_ID('dbo.Estructura_Organizacional', 'U') IS NULL
+    BEGIN
+        CREATE TABLE dbo.Estructura_Organizacional (
+            Empleado_ID INT NOT NULL PRIMARY KEY,
+            Jefe_Empleado_ID INT NULL,
+            Nivel VARCHAR(30) NOT NULL,
+            Gerencia_Departamento_ID INT NULL,
+            Area_Departamento_ID INT NULL,
+            Fecha_Registro DATETIME2(0) NOT NULL DEFAULT GETDATE(),
+            CONSTRAINT FK_EO_Empleado FOREIGN KEY (Empleado_ID) REFERENCES Empleados(Empleado_ID),
+            CONSTRAINT FK_EO_Jefe FOREIGN KEY (Jefe_Empleado_ID) REFERENCES Empleados(Empleado_ID),
+            CONSTRAINT FK_EO_Gerencia FOREIGN KEY (Gerencia_Departamento_ID) REFERENCES Departamentos(Departamento_ID),
+            CONSTRAINT FK_EO_Area FOREIGN KEY (Area_Departamento_ID) REFERENCES Departamentos(Departamento_ID)
+        );
+    END;
+
+    /* ==============================
+       MAPEO GERENCIAS -> ÁREAS
+    ============================== */
+
+    DECLARE @GerIngenieria INT = (SELECT Departamento_ID FROM Departamentos WHERE Nombre_Departamento = 'Gerencia de Ingeniería de Software');
+    DECLARE @GerSoporte INT = (SELECT Departamento_ID FROM Departamentos WHERE Nombre_Departamento = 'Gerencia de Soporte Operativo');
+    DECLARE @GerInfra INT = (SELECT Departamento_ID FROM Departamentos WHERE Nombre_Departamento = 'Gerencia de Infraestructura y Seguridad');
+    DECLARE @GerProducto INT = (SELECT Departamento_ID FROM Departamentos WHERE Nombre_Departamento = 'Gerencia de Producto y Servicios');
+
+    DECLARE @AreaBackend INT = (SELECT Departamento_ID FROM Departamentos WHERE Nombre_Departamento = 'Área Backend');
+    DECLARE @AreaFrontend INT = (SELECT Departamento_ID FROM Departamentos WHERE Nombre_Departamento = 'Área Frontend');
+    DECLARE @AreaQA INT = (SELECT Departamento_ID FROM Departamentos WHERE Nombre_Departamento = 'Área QA y Automatización');
+    DECLARE @AreaN1 INT = (SELECT Departamento_ID FROM Departamentos WHERE Nombre_Departamento = 'Área Soporte N1');
+    DECLARE @AreaN2 INT = (SELECT Departamento_ID FROM Departamentos WHERE Nombre_Departamento = 'Área Soporte N2');
+    DECLARE @AreaDevOps INT = (SELECT Departamento_ID FROM Departamentos WHERE Nombre_Departamento = 'Área DevOps');
+    DECLARE @AreaSec INT = (SELECT Departamento_ID FROM Departamentos WHERE Nombre_Departamento = 'Área Ciberseguridad');
+    DECLARE @AreaImpl INT = (SELECT Departamento_ID FROM Departamentos WHERE Nombre_Departamento = 'Área Implementación');
+    DECLARE @AreaExito INT = (SELECT Departamento_ID FROM Departamentos WHERE Nombre_Departamento = 'Área Éxito del Cliente');
+
+    INSERT INTO dbo.Gerencia_Area_Mapeo (Gerencia_Departamento_ID, Area_Departamento_ID)
+    SELECT v.GerenciaID, v.AreaID
+    FROM (VALUES
+        (@GerIngenieria, @AreaBackend),
+        (@GerIngenieria, @AreaFrontend),
+        (@GerIngenieria, @AreaQA),
+        (@GerSoporte, @AreaN1),
+        (@GerSoporte, @AreaN2),
+        (@GerInfra, @AreaDevOps),
+        (@GerInfra, @AreaSec),
+        (@GerProducto, @AreaImpl),
+        (@GerProducto, @AreaExito)
+    ) v (GerenciaID, AreaID)
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM dbo.Gerencia_Area_Mapeo m
+        WHERE m.Gerencia_Departamento_ID = v.GerenciaID
+          AND m.Area_Departamento_ID = v.AreaID
+    );
+
+    /* ==============================
+       PUESTOS
+    ============================== */
+
+    IF NOT EXISTS (SELECT 1 FROM Puestos WHERE Nombre_Puesto = 'Gerente General')
+        INSERT INTO Puestos (Departamento_ID, Nombre_Puesto, Salario_Base, Estado)
+        VALUES (@GerIngenieria, 'Gerente General', 6500000, 'ACTIVO');
+
+    DECLARE @PuestoGerenteGeneral INT = (SELECT Puesto_ID FROM Puestos WHERE Nombre_Puesto = 'Gerente General');
+
+    DECLARE @PuestosGerencia TABLE (Departamento_ID INT, Nombre VARCHAR(100), Salario DECIMAL(18,2));
+    INSERT INTO @PuestosGerencia VALUES
+    (@GerIngenieria, 'Gerente de Ingeniería de Software', 4200000),
+    (@GerSoporte, 'Gerente de Soporte Operativo', 3900000),
+    (@GerInfra, 'Gerente de Infraestructura y Seguridad', 4100000),
+    (@GerProducto, 'Gerente de Producto y Servicios', 4000000);
+
+    INSERT INTO Puestos (Departamento_ID, Nombre_Puesto, Salario_Base, Estado)
+    SELECT p.Departamento_ID, p.Nombre, p.Salario, 'ACTIVO'
+    FROM @PuestosGerencia p
+    WHERE NOT EXISTS (SELECT 1 FROM Puestos x WHERE x.Nombre_Puesto = p.Nombre);
+
+    DECLARE @PuestosJefatura TABLE (Departamento_ID INT, Nombre VARCHAR(100), Salario DECIMAL(18,2));
+    INSERT INTO @PuestosJefatura VALUES
+    (@AreaBackend, 'Jefe Área Backend', 2900000),
+    (@AreaFrontend, 'Jefe Área Frontend', 2850000),
+    (@AreaQA, 'Jefe Área QA y Automatización', 2800000),
+    (@AreaN1, 'Jefe Área Soporte N1', 2600000),
+    (@AreaN2, 'Jefe Área Soporte N2', 2650000),
+    (@AreaDevOps, 'Jefe Área DevOps', 3000000),
+    (@AreaSec, 'Jefe Área Ciberseguridad', 3050000),
+    (@AreaImpl, 'Jefe Área Implementación', 2750000),
+    (@AreaExito, 'Jefe Área Éxito del Cliente', 2700000);
+
+    INSERT INTO Puestos (Departamento_ID, Nombre_Puesto, Salario_Base, Estado)
+    SELECT p.Departamento_ID, p.Nombre, p.Salario, 'ACTIVO'
+    FROM @PuestosJefatura p
+    WHERE NOT EXISTS (SELECT 1 FROM Puestos x WHERE x.Nombre_Puesto = p.Nombre);
+
+    DECLARE @PuestosEmpleado TABLE (Departamento_ID INT, Nombre VARCHAR(120), Salario DECIMAL(18,2));
+    INSERT INTO @PuestosEmpleado VALUES
+    (@AreaBackend, 'Ingeniero Backend', 1550000),
+    (@AreaFrontend, 'Ingeniero Frontend', 1500000),
+    (@AreaQA, 'Analista QA', 1450000),
+    (@AreaN1, 'Especialista Soporte N1', 1250000),
+    (@AreaN2, 'Especialista Soporte N2', 1350000),
+    (@AreaDevOps, 'Ingeniero DevOps', 1700000),
+    (@AreaSec, 'Analista Ciberseguridad', 1750000),
+    (@AreaImpl, 'Consultor de Implementación', 1400000),
+    (@AreaExito, 'Analista Éxito del Cliente', 1300000);
+
+    INSERT INTO Puestos (Departamento_ID, Nombre_Puesto, Salario_Base, Estado)
+    SELECT p.Departamento_ID, p.Nombre, p.Salario, 'ACTIVO'
+    FROM @PuestosEmpleado p
+    WHERE NOT EXISTS (SELECT 1 FROM Puestos x WHERE x.Nombre_Puesto = p.Nombre);
+
+    /* ==============================
+       FUNCIÓN AUXILIAR EN SCRIPT
+    ============================== */
+
+    DECLARE @FechaBase DATE = '2024-01-15';
+
+    DECLARE @tmp TABLE (
+        Rol VARCHAR(30),
+        NombreUsuario VARCHAR(80),
+        Cedula VARCHAR(20),
+        PerfilID INT,
+        PuestoID INT,
+        HorarioID INT,
+        NombreCompleto VARCHAR(150),
+        PrimerNombre VARCHAR(80),
+        SegundoNombre VARCHAR(80),
+        ApellidoP VARCHAR(80),
+        ApellidoM VARCHAR(80),
+        Genero VARCHAR(30),
+        EstadoCivil VARCHAR(50),
+        CorreoCorp VARCHAR(150),
+        CorreoPers VARCHAR(150),
+        TelefonoMovil VARCHAR(50),
+        TelefonoFijo VARCHAR(50),
+        Provincia VARCHAR(50),
+        Canton VARCHAR(50),
+        Distrito VARCHAR(50),
+        Direccion VARCHAR(255),
+        IdentificadorNacional VARCHAR(50),
+        IdentificadorSS VARCHAR(50),
+        NivelEducacion VARCHAR(100),
+        JefeUsuario VARCHAR(80) NULL,
+        GerenciaDeptoID INT NULL,
+        AreaDeptoID INT NULL
+    );
+
+    /* --- Gerente General --- */
+    INSERT INTO @tmp VALUES (
+        'GERENTE_GENERAL','ggeneral','100000001',@PerGerenteGeneral,@PuestoGerenteGeneral,@HorarioDiurno,
+        'Zunorac Zunoraaf Zunoraag Zunoraah','Zunorac','Zunoraaf','Zunoraag','Zunoraah','Masculino','Casado',
+        'persona006@ejemplo.test','persona007@ejemplo.test','00000016','00000017',
+        'San José','Central','Carmen','Oficentro Corporativo Torre Azul, Piso 10',
+        'CR100000001','CCSS100000001','Maestría',
+        NULL,NULL,NULL
+    );
+
+    /* --- Gerentes --- */
+    INSERT INTO @tmp
+    SELECT 'GERENTE','gingenieria','100000002',@PerGerente,
+           (SELECT Puesto_ID FROM Puestos WHERE Nombre_Puesto='Gerente de Ingeniería de Software'),@HorarioDiurno,
+           'LAURA FERNANDA ARIAS ROJAS','LAURA','FERNANDA','ARIAS','ROJAS','Femenino','Casada',
+           'persona008@ejemplo.test','persona009@ejemplo.test','70000002','22880002',
+           'San José','Escazú','San Rafael','Condominio Vista Azul, Casa 3','CR100000002','CCSS100000002','Licenciatura',
+           'ggeneral',@GerIngenieria,NULL
+    UNION ALL
+    SELECT 'GERENTE','gsoporte','100000003',@PerGerente,
+           (SELECT Puesto_ID FROM Puestos WHERE Nombre_Puesto='Gerente de Soporte Operativo'),@HorarioExtendido,
+           'MARIO ESTEBAN CHAVES VEGA','MARIO','ESTEBAN','CHAVES','VEGA','Masculino','Casado',
+           'persona010@ejemplo.test','persona011@ejemplo.test','70000003','22880003',
+           'Alajuela','Alajuela','San José','Residencial Los Portales, Casa 8','CR100000003','CCSS100000003','Licenciatura',
+           'ggeneral',@GerSoporte,NULL
+    UNION ALL
+    SELECT 'GERENTE','ginfra','100000004',@PerGerente,
+           (SELECT Puesto_ID FROM Puestos WHERE Nombre_Puesto='Gerente de Infraestructura y Seguridad'),@HorarioDiurno,
+           'PAULA ANDREA ZAMORA SOLIS','PAULA','ANDREA','ZAMORA','SOLIS','Femenino','Soltera',
+           'persona012@ejemplo.test','persona013@ejemplo.test','70000004','22880004',
+           'Heredia','Heredia','Mercedes','Residencial El Prado, Torre B','CR100000004','CCSS100000004','Maestría',
+           'ggeneral',@GerInfra,NULL
+    UNION ALL
+    SELECT 'GERENTE','gproducto','100000005',@PerGerente,
+           (SELECT Puesto_ID FROM Puestos WHERE Nombre_Puesto='Gerente de Producto y Servicios'),@HorarioExtendido,
+           'JORGE LUIS VARGAS MENDEZ','JORGE','LUIS','VARGAS','MENDEZ','Masculino','Casado',
+           'persona014@ejemplo.test','persona015@ejemplo.test','70000005','22880005',
+           'Cartago','Central','Oriental','Residencial Mirador, Casa 14','CR100000005','CCSS100000005','Licenciatura',
+           'ggeneral',@GerProducto,NULL;
+
+    /* --- 9 Jefes de Área --- */
+    INSERT INTO @tmp VALUES
+    ('JEFE_AREA','jbackend','100000006',@PerJefeArea,(SELECT Puesto_ID FROM Puestos WHERE Nombre_Puesto='Jefe Área Backend'),@HorarioDiurno,'Zunorag Zunoraai Zunoraaj Zunorau','Zunorag','Zunoraai','Zunoraaj','Zunorau','Femenino','Casada','persona016@ejemplo.test','persona017@ejemplo.test','00000018','00000019','San José','Montes de Oca','San Pedro','Condominio Roble, Apt 12','CR100000006','CCSS100000006','Licenciatura','gingenieria',@GerIngenieria,@AreaBackend),
+    ('JEFE_AREA','jfrontend','100000007',@PerJefeArea,(SELECT Puesto_ID FROM Puestos WHERE Nombre_Puesto='Jefe Área Frontend'),@HorarioDiurno,'Zunoraak Zunoraal Zunoraam Zunoraan','Zunoraak','Zunoraal','Zunoraam','Zunoraan','Masculino','Soltero','persona018@ejemplo.test','persona019@ejemplo.test','00000020','00000021','San José','Curridabat','Granadilla','Residencial Siena, Casa 2','CR100000007','CCSS100000007','Licenciatura','gingenieria',@GerIngenieria,@AreaFrontend),
+    ('JEFE_AREA','jqa','100000008',@PerJefeArea,(SELECT Puesto_ID FROM Puestos WHERE Nombre_Puesto='Jefe Área QA y Automatización'),@HorarioDiurno,'Zunoraao Zunoras Zunoraap Zunoraaq','Zunoraao','Zunoras','Zunoraap','Zunoraaq','Femenino','Casada','persona020@ejemplo.test','persona021@ejemplo.test','00000022','00000023','Heredia','Belén','San Antonio','Condominio Bosques del Sol, Apt 4','CR100000008','CCSS100000008','Maestría','gingenieria',@GerIngenieria,@AreaQA),
+    ('JEFE_AREA','jsoporten1','100000009',@PerJefeArea,(SELECT Puesto_ID FROM Puestos WHERE Nombre_Puesto='Jefe Área Soporte N1'),@HorarioExtendido,'Zunoraar Zunoraas Zunoraat Zunoraau','Zunoraar','Zunoraas','Zunoraat','Zunoraau','Masculino','Casado','persona022@ejemplo.test','persona023@ejemplo.test','00000024','00000025','Alajuela','Grecia','San Roque','Residencial Monte Verde, Casa 11','CR100000009','CCSS100000009','Licenciatura','gsoporte',@GerSoporte,@AreaN1),
+    ('JEFE_AREA','jsoporten2','100000010',@PerJefeArea,(SELECT Puesto_ID FROM Puestos WHERE Nombre_Puesto='Jefe Área Soporte N2'),@HorarioExtendido,'Zunoraav Zunorak Zunoraaw Zunoraax','Zunoraav','Zunorak','Zunoraaw','Zunoraax','Femenino','Soltera','persona024@ejemplo.test','persona025@ejemplo.test','00000026','00000027','Alajuela','Poás','San Rafael','Condominio Las Palmas, Casa 6','CR100000010','CCSS100000010','Licenciatura','gsoporte',@GerSoporte,@AreaN2),
+    ('JEFE_AREA','jdevops','100000011',@PerJefeArea,(SELECT Puesto_ID FROM Puestos WHERE Nombre_Puesto='Jefe Área DevOps'),@HorarioDiurno,'Zunoraay Zunoraaz Zunoraba Zunoraah','Zunoraay','Zunoraaz','Zunoraba','Zunoraah','Masculino','Casado','persona026@ejemplo.test','persona027@ejemplo.test','00000028','00000029','Heredia','Santo Domingo','Pará','Residencial Las Brisas, Casa 21','CR100000011','CCSS100000011','Maestría','ginfra',@GerInfra,@AreaDevOps),
+    ('JEFE_AREA','jseguridad','100000012',@PerJefeArea,(SELECT Puesto_ID FROM Puestos WHERE Nombre_Puesto='Jefe Área Ciberseguridad'),@HorarioDiurno,'Zunorabb Zunorabc Zunorabd Zunorabe','Zunorabb','Zunorabc','Zunorabd','Zunorabe','Femenino','Casada','persona028@ejemplo.test','persona029@ejemplo.test','00000030','00000031','Cartago','La Unión','Tres Ríos','Condominio Pradera, Torre C','CR100000012','CCSS100000012','Maestría','ginfra',@GerInfra,@AreaSec),
+    ('JEFE_AREA','jimplementacion','100000013',@PerJefeArea,(SELECT Puesto_ID FROM Puestos WHERE Nombre_Puesto='Jefe Área Implementación'),@HorarioExtendido,'Zunorabf Zunorabg Zunorabh Zunorap','Zunorabf','Zunorabg','Zunorabh','Zunorap','Masculino','Casado','persona030@ejemplo.test','persona031@ejemplo.test','00000032','00000033','Cartago','Oreamuno','San Rafael','Residencial Valle Alto, Casa 9','CR100000013','CCSS100000013','Licenciatura','gproducto',@GerProducto,@AreaImpl),
+    ('JEFE_AREA','jexito','100000014',@PerJefeArea,(SELECT Puesto_ID FROM Puestos WHERE Nombre_Puesto='Jefe Área Éxito del Cliente'),@HorarioExtendido,'Zunorabi Zunorabj Zunoraah Zunorabk','Zunorabi','Zunorabj','Zunoraah','Zunorabk','Femenino','Soltera','persona032@ejemplo.test','persona033@ejemplo.test','00000034','00000035','San José','Santa Ana','Pozos','Condominio Santa Verde, Apt 7','CR100000014','CCSS100000014','Licenciatura','gproducto',@GerProducto,@AreaExito);
+
+    /* --- 40 empleados de área (generados) --- */
+    DECLARE @AreasEmpleados TABLE (AreaID INT, JefeUsuario VARCHAR(80), Cantidad INT, PuestoNombre VARCHAR(120), HorarioID INT, GerenciaID INT, CodigoArea VARCHAR(20));
+    INSERT INTO @AreasEmpleados VALUES
+    (@AreaBackend, 'jbackend', 5, 'Ingeniero Backend', @HorarioDiurno, @GerIngenieria, 'BACK'),
+    (@AreaFrontend, 'jfrontend', 5, 'Ingeniero Frontend', @HorarioDiurno, @GerIngenieria, 'FRONT'),
+    (@AreaQA, 'jqa', 4, 'Analista QA', @HorarioDiurno, @GerIngenieria, 'QA'),
+    (@AreaN1, 'jsoporten1', 5, 'Especialista Soporte N1', @HorarioExtendido, @GerSoporte, 'SN1'),
+    (@AreaN2, 'jsoporten2', 4, 'Especialista Soporte N2', @HorarioExtendido, @GerSoporte, 'SN2'),
+    (@AreaDevOps, 'jdevops', 4, 'Ingeniero DevOps', @HorarioDiurno, @GerInfra, 'DEVOPS'),
+    (@AreaSec, 'jseguridad', 4, 'Analista Ciberseguridad', @HorarioDiurno, @GerInfra, 'SEC'),
+    (@AreaImpl, 'jimplementacion', 5, 'Consultor de Implementación', @HorarioTarde, @GerProducto, 'IMPL'),
+    (@AreaExito, 'jexito', 4, 'Analista Éxito del Cliente', @HorarioExtendido, @GerProducto, 'EXITO');
+
+    DECLARE
+        @AreaID INT,
+        @JefeUsuario VARCHAR(80),
+        @Cantidad INT,
+        @PuestoNombre VARCHAR(120),
+        @HorarioTmp INT,
+        @GerTmp INT,
+        @CodigoArea VARCHAR(20),
+        @i INT,
+        @idxGlobal INT = 15;
+
+    DECLARE cur CURSOR FOR
+        SELECT AreaID, JefeUsuario, Cantidad, PuestoNombre, HorarioID, GerenciaID, CodigoArea
+        FROM @AreasEmpleados;
+
+    OPEN cur;
+    FETCH NEXT FROM cur INTO @AreaID, @JefeUsuario, @Cantidad, @PuestoNombre, @HorarioTmp, @GerTmp, @CodigoArea;
+
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+        SET @i = 1;
+        WHILE @i <= @Cantidad
+        BEGIN
+            DECLARE @usr_gen VARCHAR(80) = CONCAT(LOWER(@CodigoArea), '_', RIGHT('00' + CAST(@i AS VARCHAR(2)), 2));
+            DECLARE @ced_gen VARCHAR(20) = CONCAT('10', RIGHT('0000000' + CAST(@idxGlobal AS VARCHAR(7)), 7));
+            DECLARE @nom1_gen VARCHAR(80) = CONCAT('EMPLEADO', RIGHT('00' + CAST(@idxGlobal AS VARCHAR(2)), 2));
+            DECLARE @nom2_gen VARCHAR(80) = 'SOPORTE';
+            DECLARE @ape1_gen VARCHAR(80) = 'SOFTWARE';
+            DECLARE @ape2_gen VARCHAR(80) = 'CR';
+            DECLARE @nombreCompleto_gen VARCHAR(150) = CONCAT(@nom1_gen, ' ', @nom2_gen, ' ', @ape1_gen, ' ', @ape2_gen);
+            DECLARE @correoCorp_gen VARCHAR(150) = CONCAT(@usr_gen, '@ejemplo.test');
+            DECLARE @correoPers_gen VARCHAR(150) = CONCAT(@usr_gen, 'persona005@ejemplo.test');
+            DECLARE @telMov_gen VARCHAR(50) = CONCAT('70', RIGHT('000000' + CAST(@idxGlobal AS VARCHAR(6)), 6));
+            DECLARE @telFijo_gen VARCHAR(50) = CONCAT('22', RIGHT('000000' + CAST(@idxGlobal AS VARCHAR(6)), 6));
+            DECLARE @idNacional_gen VARCHAR(50) = CONCAT('CR', @ced_gen);
+            DECLARE @idSS_gen VARCHAR(50) = CONCAT('CCSS', @ced_gen);
+
+            INSERT INTO @tmp
+            SELECT
+                'EMPLEADO_AREA',
+                @usr_gen,
+                @ced_gen,
+                @PerEmpleado,
+                (SELECT Puesto_ID FROM Puestos WHERE Nombre_Puesto = @PuestoNombre),
+                @HorarioTmp,
+                @nombreCompleto_gen,
+                @nom1_gen,
+                @nom2_gen,
+                @ape1_gen,
+                @ape2_gen,
+                CASE WHEN @idxGlobal % 2 = 0 THEN 'Femenino' ELSE 'Masculino' END,
+                CASE WHEN @idxGlobal % 3 = 0 THEN 'Casado' ELSE 'Soltero' END,
+                @correoCorp_gen,
+                @correoPers_gen,
+                @telMov_gen,
+                @telFijo_gen,
+                'San José',
+                'Central',
+                'Catedral',
+                CONCAT('Avenida ', RIGHT('00' + CAST(@idxGlobal AS VARCHAR(2)), 2), ', Calle ', RIGHT('00' + CAST(@i AS VARCHAR(2)), 2), ', Edificio ', @CodigoArea),
+                @idNacional_gen,
+                @idSS_gen,
+                'Bachillerato universitario',
+                @JefeUsuario,
+                @GerTmp,
+                @AreaID;
+
+            SET @idxGlobal += 1;
+            SET @i += 1;
+        END;
+
+        FETCH NEXT FROM cur INTO @AreaID, @JefeUsuario, @Cantidad, @PuestoNombre, @HorarioTmp, @GerTmp, @CodigoArea;
+    END;
+
+    CLOSE cur;
+    DEALLOCATE cur;
+
+    /* ==============================
+       INSERCIÓN FINAL EN TABLAS
+    ============================== */
+
+    DECLARE
+        @Rol VARCHAR(30),
+        @NombreUsuario VARCHAR(80),
+        @Cedula VARCHAR(20),
+        @PerfilID INT,
+        @PuestoID INT,
+        @HorarioID INT,
+        @NombreCompleto VARCHAR(150),
+        @PrimerNombre VARCHAR(80),
+        @SegundoNombre VARCHAR(80),
+        @ApellidoP VARCHAR(80),
+        @ApellidoM VARCHAR(80),
+        @Genero VARCHAR(30),
+        @EstadoCivil VARCHAR(50),
+        @CorreoCorp VARCHAR(150),
+        @CorreoPers VARCHAR(150),
+        @TelefonoMovil VARCHAR(50),
+        @TelefonoFijo VARCHAR(50),
+        @Provincia VARCHAR(50),
+        @Canton VARCHAR(50),
+        @Distrito VARCHAR(50),
+        @Direccion VARCHAR(255),
+        @IdentificadorNacional VARCHAR(50),
+        @IdentificadorSS VARCHAR(50),
+        @NivelEducacion VARCHAR(100),
+        @JefeUsuarioTmp VARCHAR(80),
+        @GerenciaIDTmp INT,
+        @AreaIDTmp INT,
+        @UsuarioID INT,
+        @EmpleadoID INT,
+        @JefeEmpleadoID INT;
+
+    DECLARE cur2 CURSOR FOR
+        SELECT Rol, NombreUsuario, Cedula, PerfilID, PuestoID, HorarioID,
+               NombreCompleto, PrimerNombre, SegundoNombre, ApellidoP, ApellidoM,
+               Genero, EstadoCivil, CorreoCorp, CorreoPers, TelefonoMovil, TelefonoFijo,
+               Provincia, Canton, Distrito, Direccion,
+               IdentificadorNacional, IdentificadorSS, NivelEducacion,
+               JefeUsuario, GerenciaDeptoID, AreaDeptoID
+        FROM @tmp;
+
+    OPEN cur2;
+    FETCH NEXT FROM cur2 INTO
+        @Rol, @NombreUsuario, @Cedula, @PerfilID, @PuestoID, @HorarioID,
+        @NombreCompleto, @PrimerNombre, @SegundoNombre, @ApellidoP, @ApellidoM,
+        @Genero, @EstadoCivil, @CorreoCorp, @CorreoPers, @TelefonoMovil, @TelefonoFijo,
+        @Provincia, @Canton, @Distrito, @Direccion,
+        @IdentificadorNacional, @IdentificadorSS, @NivelEducacion,
+        @JefeUsuarioTmp, @GerenciaIDTmp, @AreaIDTmp;
+
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM Usuarios WHERE Nombre_Usuario = @NombreUsuario)
+        BEGIN
+            INSERT INTO Usuarios (Nombre_Usuario, Password_Hash, Debe_Cambiar_Clave, Estado)
+            VALUES (@NombreUsuario, 'HASH_TEMPORAL_2026!', 0, 'ACTIVO');
+        END
+
+        SET @UsuarioID = (SELECT Usuario_ID FROM Usuarios WHERE Nombre_Usuario = @NombreUsuario);
+
+        IF NOT EXISTS (SELECT 1 FROM Empleados WHERE Cedula = @Cedula)
+        BEGIN
+            INSERT INTO Empleados (Usuario_ID, Perfil_ID, Puesto_ID, Horario_ID, Cedula, Fecha_Ingreso, Fotografia_Url, Estado)
+            VALUES (@UsuarioID, @PerfilID, @PuestoID, @HorarioID, @Cedula, DATEADD(DAY, ABS(CHECKSUM(@Cedula)) % 600, @FechaBase), CONCAT('/img/empleados/', @NombreUsuario, '.jpg'), 'ACTIVO');
+        END
+
+        SET @EmpleadoID = (SELECT Empleado_ID FROM Empleados WHERE Cedula = @Cedula);
+
+        IF NOT EXISTS (SELECT 1 FROM Informacion_Personal WHERE Empleado_ID = @EmpleadoID)
+        BEGIN
+            INSERT INTO Informacion_Personal
+            (Empleado_ID, Nombre_Empleado, Primer_Nombre, Segundo_Nombre, Apellido_Paterno, Apellido_Materno, Fecha_Nacimiento, Genero, Estado_Civil, Pais_Demografico)
+            VALUES
+            (@EmpleadoID, @NombreCompleto, @PrimerNombre, @SegundoNombre, @ApellidoP, @ApellidoM,
+             DATEADD(DAY, -1 * (ABS(CHECKSUM(@Cedula)) % 12000), CAST(GETDATE() AS DATE)), @Genero, @EstadoCivil, 'Costa Rica');
+        END
+
+        IF NOT EXISTS (SELECT 1 FROM Informacion_Contacto WHERE Empleado_ID = @EmpleadoID)
+        BEGIN
+            INSERT INTO Informacion_Contacto
+            (Empleado_ID, Correo_Electronico, Correo_Electronico_Personal, Telefono_Movil, Telefono_Fijo)
+            VALUES
+            (@EmpleadoID, @CorreoCorp, @CorreoPers, @TelefonoMovil, @TelefonoFijo);
+        END
+
+        IF NOT EXISTS (SELECT 1 FROM Informacion_Direccion WHERE Empleado_ID = @EmpleadoID)
+        BEGIN
+            INSERT INTO Informacion_Direccion
+            (Empleado_ID, Pais, Provincia, Canton, Distrito, Direccion_Exacta)
+            VALUES
+            (@EmpleadoID, 'Costa Rica', @Provincia, @Canton, @Distrito, @Direccion);
+        END
+
+        IF NOT EXISTS (SELECT 1 FROM Informacion_Identificacion WHERE Empleado_ID = @EmpleadoID)
+        BEGIN
+            INSERT INTO Informacion_Identificacion
+            (Empleado_ID, Pais_Identificacion, Tipo_Identificador_Nacional, Identificador_Nacional, Pais_Seguridad_Social, Tipo_Seguridad_Social, Identificador_Seguridad_Social, Nivel_Educacion_Superior, Mensaje_Discapacidad)
+            VALUES
+            (@EmpleadoID, 'Costa Rica', 'Cédula', @IdentificadorNacional, 'Costa Rica', 'CCSS', @IdentificadorSS, @NivelEducacion, 'Sin condición reportada');
+        END
+
+        IF NOT EXISTS (SELECT 1 FROM Contactos_Emergencia WHERE Empleado_ID = @EmpleadoID)
+        BEGIN
+            INSERT INTO Contactos_Emergencia
+            (Empleado_ID, Nombre_Completo, Relacion, Es_Carga_Familiar, Telefono_Contacto)
+            VALUES
+            (@EmpleadoID, CONCAT('Zunoraae ', @NombreCompleto), 'Familiar', 1, CONCAT('15', RIGHT(@TelefonoMovil, 6)));
+        END
+
+        SET @JefeEmpleadoID = NULL;
+        IF @JefeUsuarioTmp IS NOT NULL
+        BEGIN
+            SET @JefeEmpleadoID = (
+                SELECT e.Empleado_ID
+                FROM Empleados e
+                INNER JOIN Usuarios u ON u.Usuario_ID = e.Usuario_ID
+                WHERE u.Nombre_Usuario = @JefeUsuarioTmp
+            );
+        END
+
+        IF NOT EXISTS (SELECT 1 FROM dbo.Estructura_Organizacional WHERE Empleado_ID = @EmpleadoID)
+        BEGIN
+            INSERT INTO dbo.Estructura_Organizacional
+            (Empleado_ID, Jefe_Empleado_ID, Nivel, Gerencia_Departamento_ID, Area_Departamento_ID)
+            VALUES
+            (@EmpleadoID, @JefeEmpleadoID, @Rol, @GerenciaIDTmp, @AreaIDTmp);
+        END
+
+        FETCH NEXT FROM cur2 INTO
+            @Rol, @NombreUsuario, @Cedula, @PerfilID, @PuestoID, @HorarioID,
+            @NombreCompleto, @PrimerNombre, @SegundoNombre, @ApellidoP, @ApellidoM,
+            @Genero, @EstadoCivil, @CorreoCorp, @CorreoPers, @TelefonoMovil, @TelefonoFijo,
+            @Provincia, @Canton, @Distrito, @Direccion,
+            @IdentificadorNacional, @IdentificadorSS, @NivelEducacion,
+            @JefeUsuarioTmp, @GerenciaIDTmp, @AreaIDTmp;
+    END;
+
+    CLOSE cur2;
+    DEALLOCATE cur2;
+
+    COMMIT TRAN;
+
+    PRINT 'Ecosistema creado: 1 Gerente General, 4 Gerencias, 9 Jefes de Área y 40 Empleados de Área con datos completos.';
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0
+        ROLLBACK TRAN;
+
+    PRINT ERROR_MESSAGE();
+    THROW;
+END CATCH;

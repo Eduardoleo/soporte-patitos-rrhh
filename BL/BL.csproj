@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk" ToolsVersion="Current">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <FileUpgradeFlags>40</FileUpgradeFlags>
+    <OldToolsVersion>2.0</OldToolsVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.15" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.23.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\DA\DA.csproj" />
+    <ProjectReference Include="..\Model\Model.csproj" />
+  </ItemGroup>
+</Project>

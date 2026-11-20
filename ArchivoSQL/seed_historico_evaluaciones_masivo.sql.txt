@@ -1,0 +1,384 @@
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+
+BEGIN TRY
+    BEGIN TRAN;
+
+    DECLARE @Hoy DATE = CAST(GETDATE() AS DATE);
+
+    DECLARE @PreguntasSeed TABLE (Texto NVARCHAR(255));
+    INSERT INTO @PreguntasSeed (Texto)
+    VALUES
+    (N'Cumple con las tareas asignadas'),
+    (N'No posee ausencias injustificadas'),
+    (N'Puntualidad en entradas y reuniones'),
+    (N'Posee buena relaci' + NCHAR(243) + N'n con los compa' + NCHAR(241) + N'eros'),
+    (N'Fomenta el trabajo en equipo'),
+    (N'Comunica avances y bloqueos oportunamente'),
+    (N'Cumple est' + NCHAR(225) + N'ndares de calidad del ' + NCHAR(225) + N'rea'),
+    (N'Manejo adecuado de herramientas corporativas'),
+    (N'Compromiso con objetivos del puesto'),
+    (N'Actitud de mejora continua y aprendizaje');
+
+    IF (SELECT COUNT(*) FROM Preguntas_Evaluacion) < 10
+    BEGIN
+        INSERT INTO Preguntas_Evaluacion (Texto_Pregunta)
+        SELECT ps.Texto
+        FROM @PreguntasSeed ps
+        EXCEPT
+        SELECT p.Texto_Pregunta
+        FROM Preguntas_Evaluacion p;
+    END;
+
+    -- Normalización de tildes/mojibake heredado
+    UPDATE Preguntas_Evaluacion
+    SET Texto_Pregunta = REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(Texto_Pregunta,
+        'Ã¡', 'á'), 'Ã©', 'é'), 'Ã­', 'í'), 'Ã³', 'ó'), 'Ãº', 'ú'),
+        'Ã', 'Á'), 'Ã‰', 'É'), 'Ã', 'Í'), 'Ã“', 'Ó'), 'Ãš', 'Ú'),
+        'Ã±', 'ñ'), 'Ã‘', 'Ñ')
+    WHERE Texto_Pregunta LIKE '%Ã%';
+
+    UPDATE Evaluaciones
+    SET Observaciones = REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(Observaciones,
+        'Ã¡', 'á'), 'Ã©', 'é'), 'Ã­', 'í'), 'Ã³', 'ó'), 'Ãº', 'ú'),
+        'Ã', 'Á'), 'Ã‰', 'É'), 'Ã', 'Í'), 'Ã“', 'Ó'), 'Ãš', 'Ú'),
+        'Ã±', 'ñ'), 'Ã‘', 'Ñ')
+    WHERE Observaciones LIKE '%Ã%';
+
+    -- Corrección directa de textos conocidos (preguntas y observaciones seed)
+    UPDATE p
+    SET p.Texto_Pregunta = N'Posee buena relación con los compañeros'
+    FROM Preguntas_Evaluacion p
+    WHERE UPPER(p.Texto_Pregunta) LIKE UPPER('%Posee buena relaci%con los compa%eros%')
+      AND NOT EXISTS (
+            SELECT 1
+            FROM Preguntas_Evaluacion px
+            WHERE px.Texto_Pregunta = N'Posee buena relación con los compañeros'
+              AND px.Pregunta_ID <> p.Pregunta_ID
+      );
+
+    UPDATE p
+    SET p.Texto_Pregunta = N'Cumple estándares de calidad del área'
+    FROM Preguntas_Evaluacion p
+    WHERE UPPER(p.Texto_Pregunta) LIKE UPPER('%Cumple est%ndares de calidad del %rea%')
+      AND NOT EXISTS (
+            SELECT 1
+            FROM Preguntas_Evaluacion px
+            WHERE px.Texto_Pregunta = N'Cumple estándares de calidad del área'
+              AND px.Pregunta_ID <> p.Pregunta_ID
+      );
+
+    -- Consolidación de duplicados (pregunta con texto mojibake -> pregunta correcta)
+    DECLARE @PreguntaBuenaRelacionId INT = (
+        SELECT TOP 1 Pregunta_ID
+        FROM Preguntas_Evaluacion
+        WHERE Texto_Pregunta = N'Posee buena relación con los compañeros'
+        ORDER BY Pregunta_ID
+    );
+
+    DECLARE @PreguntaMojibakeRelacionId INT = (
+        SELECT TOP 1 Pregunta_ID
+        FROM Preguntas_Evaluacion
+        WHERE Texto_Pregunta LIKE '%Ã%'
+          AND UPPER(Texto_Pregunta) LIKE UPPER('%Posee buena relaci%con los compa%eros%')
+        ORDER BY Pregunta_ID
+    );
+
+    IF @PreguntaBuenaRelacionId IS NOT NULL AND @PreguntaMojibakeRelacionId IS NOT NULL AND @PreguntaBuenaRelacionId <> @PreguntaMojibakeRelacionId
+    BEGIN
+        DELETE d
+        FROM Evaluacion_Detalle d
+        WHERE d.Pregunta_ID = @PreguntaMojibakeRelacionId
+          AND EXISTS (
+            SELECT 1
+            FROM Evaluacion_Detalle x
+            WHERE x.Evaluacion_ID = d.Evaluacion_ID
+              AND x.Pregunta_ID = @PreguntaBuenaRelacionId
+          );
+
+        UPDATE Evaluacion_Detalle
+        SET Pregunta_ID = @PreguntaBuenaRelacionId
+        WHERE Pregunta_ID = @PreguntaMojibakeRelacionId;
+
+        DELETE FROM Preguntas_Evaluacion
+        WHERE Pregunta_ID = @PreguntaMojibakeRelacionId;
+    END;
+
+    DELETE p
+    FROM Preguntas_Evaluacion p
+    WHERE p.Texto_Pregunta IN (N'Posee buena relaciÃ³n con los compaÃ±eros', N'Cumple estÃ¡ndares de calidad del Ã¡rea')
+      AND EXISTS (
+        SELECT 1
+        FROM Preguntas_Evaluacion px
+        WHERE px.Texto_Pregunta IN (N'Posee buena relación con los compañeros', N'Cumple estándares de calidad del área')
+      );
+
+    UPDATE Evaluaciones
+    SET Observaciones = CASE
+        WHEN CHARINDEX('EVALUACION_PRIMEROS_3_MESES', ISNULL(Observaciones, '')) > 0 AND Promedio < 80
+            THEN N'[SEED_EVAL_AUTO] EVALUACION_PRIMEROS_3_MESES | Resultado menor de 80. Se habla con el empleado y se le da un mes más de prueba.'
+        WHEN CHARINDEX('EVALUACION_PRIMEROS_3_MESES', ISNULL(Observaciones, '')) > 0
+            THEN N'[SEED_EVAL_AUTO] EVALUACION_PRIMEROS_3_MESES | Resultado satisfactorio.'
+        WHEN CHARINDEX('EVALUACION_4_MESES', ISNULL(Observaciones, '')) > 0 AND Promedio < 80
+            THEN N'[SEED_EVAL_AUTO] EVALUACION_4_MESES | Reprueba periodo adicional. Se aplica despido por bajo desempeño.'
+        WHEN CHARINDEX('EVALUACION_4_MESES', ISNULL(Observaciones, '')) > 0
+            THEN N'[SEED_EVAL_AUTO] EVALUACION_4_MESES | Aprueba periodo adicional.'
+        WHEN CHARINDEX('EVALUACION_SEMESTRAL', ISNULL(Observaciones, '')) > 0
+            THEN N'[SEED_EVAL_AUTO] EVALUACION_SEMESTRAL | Evaluación de seguimiento semestral.'
+        ELSE Observaciones
+    END
+    WHERE CHARINDEX('[SEED_EVAL_AUTO]', ISNULL(Observaciones, '')) > 0;
+
+    DECLARE @Preguntas TABLE (Pregunta_ID INT PRIMARY KEY);
+    INSERT INTO @Preguntas (Pregunta_ID)
+    SELECT TOP 10 Pregunta_ID
+    FROM Preguntas_Evaluacion
+    ORDER BY Pregunta_ID;
+
+    DECLARE @RrhhUsuarioId INT = (
+        SELECT TOP 1 u.Usuario_ID
+        FROM Empleados e
+        INNER JOIN Usuarios u ON u.Usuario_ID = e.Usuario_ID
+        INNER JOIN Perfiles p ON p.Perfil_ID = e.Perfil_ID
+        WHERE UPPER(ISNULL(p.Nombre_Perfil, '')) LIKE '%RRHH%'
+           OR UPPER(ISNULL(p.Nombre_Perfil, '')) LIKE '%RECURSOS%'
+        ORDER BY e.Empleado_ID
+    );
+
+    DECLARE @EmpleadoId INT;
+    DECLARE @UsuarioEmpleadoId INT;
+    DECLARE @FechaIngreso DATE;
+    DECLARE @NombrePerfilActual NVARCHAR(150);
+    DECLARE @NombreUsuarioActual NVARCHAR(200);
+    DECLARE @UsuarioEvaluadorId INT;
+
+    DECLARE cur CURSOR LOCAL FAST_FORWARD FOR
+        SELECT e.Empleado_ID, e.Usuario_ID, CAST(e.Fecha_Ingreso AS DATE), ISNULL(p.Nombre_Perfil, ''), ISNULL(u.Nombre_Usuario, '')
+        FROM Empleados e
+        LEFT JOIN Perfiles p ON p.Perfil_ID = e.Perfil_ID
+        LEFT JOIN Usuarios u ON u.Usuario_ID = e.Usuario_ID
+        ORDER BY e.Empleado_ID;
+
+    OPEN cur;
+    FETCH NEXT FROM cur INTO @EmpleadoId, @UsuarioEmpleadoId, @FechaIngreso, @NombrePerfilActual, @NombreUsuarioActual;
+
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+        DECLARE @EvaluadorJefeUsuarioId INT = (
+            SELECT TOP 1 ej.Usuario_ID
+            FROM Estructura_Organizacional eo
+            INNER JOIN Empleados ej ON ej.Empleado_ID = eo.Jefe_Empleado_ID
+            WHERE eo.Empleado_ID = @EmpleadoId
+            ORDER BY eo.Fecha_Registro DESC
+        );
+
+        SET @UsuarioEvaluadorId = ISNULL(@EvaluadorJefeUsuarioId, @RrhhUsuarioId);
+        IF @UsuarioEvaluadorId IS NULL
+            SET @UsuarioEvaluadorId = @UsuarioEmpleadoId;
+
+        DECLARE @ReprobadoPrueba BIT = 0;
+
+        -- =========================
+        -- Evaluación de 3 meses
+        -- =========================
+        DECLARE @Fecha3M DATE = DATEADD(MONTH, 3, @FechaIngreso);
+        IF @Fecha3M <= @Hoy
+        BEGIN
+            DECLARE @Seed3 INT = ABS(CHECKSUM(CONCAT(@EmpleadoId, '|3M|', CONVERT(VARCHAR(8), @Fecha3M, 112))));
+            DECLARE @Nota3 DECIMAL(5,2) = CAST(65 + (@Seed3 % 36) AS DECIMAL(5,2)); -- 65..100
+
+            DECLARE @Obs3 NVARCHAR(MAX) = CASE
+                WHEN @Nota3 < 80
+                    THEN N'[SEED_EVAL_AUTO] EVALUACION_PRIMEROS_3_MESES | Resultado menor de 80. Se habla con el empleado y se le da un mes más de prueba.'
+                ELSE N'[SEED_EVAL_AUTO] EVALUACION_PRIMEROS_3_MESES | Resultado satisfactorio.'
+            END;
+
+            IF NOT EXISTS (
+                SELECT 1 FROM Evaluaciones
+                WHERE Empleado_ID = @EmpleadoId
+                  AND Fecha_Evaluacion = @Fecha3M
+                  AND Observaciones LIKE '%[SEED_EVAL_AUTO] EVALUACION_PRIMEROS_3_MESES%'
+            )
+            BEGIN
+                INSERT INTO Evaluaciones
+                (
+                    Empleado_ID,
+                    Usuario_Evaluador_ID,
+                    Fecha_Evaluacion,
+                    Promedio,
+                    Observaciones
+                )
+                VALUES
+                (
+                    @EmpleadoId,
+                    @UsuarioEvaluadorId,
+                    @Fecha3M,
+                    @Nota3,
+                    @Obs3
+                );
+
+                DECLARE @Eval3Id BIGINT = SCOPE_IDENTITY();
+                DECLARE @Base3 INT = CASE WHEN @Nota3 >= 95 THEN 10 ELSE CASE WHEN @Nota3 < 10 THEN 1 ELSE CAST(ROUND(@Nota3 / 10.0, 0) AS INT) END END;
+
+                INSERT INTO Evaluacion_Detalle (Evaluacion_ID, Pregunta_ID, Calificacion)
+                SELECT
+                    @Eval3Id,
+                    p.Pregunta_ID,
+                    CASE
+                        WHEN @Base3 + ((ABS(CHECKSUM(CONCAT(@Eval3Id, '|', p.Pregunta_ID))) % 3) - 1) < 1 THEN 1
+                        WHEN @Base3 + ((ABS(CHECKSUM(CONCAT(@Eval3Id, '|', p.Pregunta_ID))) % 3) - 1) > 10 THEN 10
+                        ELSE @Base3 + ((ABS(CHECKSUM(CONCAT(@Eval3Id, '|', p.Pregunta_ID))) % 3) - 1)
+                    END
+                FROM @Preguntas p;
+            END
+
+            IF @Nota3 < 80
+                SET @ReprobadoPrueba = 1;
+
+            -- =========================
+            -- Evaluación de 4 meses (solo si no pasó 3 meses)
+            -- =========================
+            IF @Nota3 < 80
+            BEGIN
+                DECLARE @Fecha4M DATE = DATEADD(MONTH, 4, @FechaIngreso);
+                IF @Fecha4M <= @Hoy
+                BEGIN
+                    DECLARE @Seed4 INT = ABS(CHECKSUM(CONCAT(@EmpleadoId, '|4M|', CONVERT(VARCHAR(8), @Fecha4M, 112))));
+                    DECLARE @Nota4 DECIMAL(5,2) = CAST(60 + (@Seed4 % 36) AS DECIMAL(5,2)); -- 60..95
+
+                    DECLARE @Obs4 NVARCHAR(MAX) = CASE
+                        WHEN @Nota4 < 80
+                            THEN N'[SEED_EVAL_AUTO] EVALUACION_4_MESES | Reprueba periodo adicional. Se aplica despido por bajo desempeño.'
+                        ELSE N'[SEED_EVAL_AUTO] EVALUACION_4_MESES | Aprueba periodo adicional.'
+                    END;
+
+                    IF NOT EXISTS (
+                        SELECT 1 FROM Evaluaciones
+                        WHERE Empleado_ID = @EmpleadoId
+                          AND Fecha_Evaluacion = @Fecha4M
+                          AND Observaciones LIKE '%[SEED_EVAL_AUTO] EVALUACION_4_MESES%'
+                    )
+                    BEGIN
+                        INSERT INTO Evaluaciones
+                        (
+                            Empleado_ID,
+                            Usuario_Evaluador_ID,
+                            Fecha_Evaluacion,
+                            Promedio,
+                            Observaciones
+                        )
+                        VALUES
+                        (
+                            @EmpleadoId,
+                            @UsuarioEvaluadorId,
+                            @Fecha4M,
+                            @Nota4,
+                            @Obs4
+                        );
+
+                        DECLARE @Eval4Id BIGINT = SCOPE_IDENTITY();
+                        DECLARE @Base4 INT = CASE WHEN @Nota4 >= 95 THEN 10 ELSE CASE WHEN @Nota4 < 10 THEN 1 ELSE CAST(ROUND(@Nota4 / 10.0, 0) AS INT) END END;
+
+                        INSERT INTO Evaluacion_Detalle (Evaluacion_ID, Pregunta_ID, Calificacion)
+                        SELECT
+                            @Eval4Id,
+                            p.Pregunta_ID,
+                            CASE
+                                WHEN @Base4 + ((ABS(CHECKSUM(CONCAT(@Eval4Id, '|', p.Pregunta_ID))) % 3) - 1) < 1 THEN 1
+                                WHEN @Base4 + ((ABS(CHECKSUM(CONCAT(@Eval4Id, '|', p.Pregunta_ID))) % 3) - 1) > 10 THEN 10
+                                ELSE @Base4 + ((ABS(CHECKSUM(CONCAT(@Eval4Id, '|', p.Pregunta_ID))) % 3) - 1)
+                            END
+                        FROM @Preguntas p;
+                    END
+
+                    IF @Nota4 < 80
+                        SET @ReprobadoPrueba = 1;
+                END
+            END
+        END
+
+        -- =========================
+        -- Evaluaciones cada 6 meses
+        -- =========================
+        DECLARE @MesAcumulado INT = 6;
+        WHILE DATEADD(MONTH, @MesAcumulado, @FechaIngreso) <= @Hoy
+        BEGIN
+            DECLARE @Fecha6M DATE = DATEADD(MONTH, @MesAcumulado, @FechaIngreso);
+            DECLARE @Seed6 INT = ABS(CHECKSUM(CONCAT(@EmpleadoId, '|6M|', @MesAcumulado, '|', CONVERT(VARCHAR(8), @Fecha6M, 112))));
+            DECLARE @Nota6 DECIMAL(5,2) = CAST(78 + (@Seed6 % 23) AS DECIMAL(5,2)); -- 78..100
+
+            DECLARE @Obs6 NVARCHAR(MAX) = N'[SEED_EVAL_AUTO] EVALUACION_SEMESTRAL | Evaluación de seguimiento semestral.';
+
+            IF NOT EXISTS (
+                SELECT 1 FROM Evaluaciones
+                WHERE Empleado_ID = @EmpleadoId
+                  AND Fecha_Evaluacion = @Fecha6M
+                  AND Observaciones LIKE '%[SEED_EVAL_AUTO] EVALUACION_SEMESTRAL%'
+            )
+            BEGIN
+                INSERT INTO Evaluaciones
+                (
+                    Empleado_ID,
+                    Usuario_Evaluador_ID,
+                    Fecha_Evaluacion,
+                    Promedio,
+                    Observaciones
+                )
+                VALUES
+                (
+                    @EmpleadoId,
+                    @UsuarioEvaluadorId,
+                    @Fecha6M,
+                    @Nota6,
+                    @Obs6
+                );
+
+                DECLARE @Eval6Id BIGINT = SCOPE_IDENTITY();
+                DECLARE @Base6 INT = CASE WHEN @Nota6 >= 95 THEN 10 ELSE CASE WHEN @Nota6 < 10 THEN 1 ELSE CAST(ROUND(@Nota6 / 10.0, 0) AS INT) END END;
+
+                INSERT INTO Evaluacion_Detalle (Evaluacion_ID, Pregunta_ID, Calificacion)
+                SELECT
+                    @Eval6Id,
+                    p.Pregunta_ID,
+                    CASE
+                        WHEN @Base6 + ((ABS(CHECKSUM(CONCAT(@Eval6Id, '|', p.Pregunta_ID))) % 3) - 1) < 1 THEN 1
+                        WHEN @Base6 + ((ABS(CHECKSUM(CONCAT(@Eval6Id, '|', p.Pregunta_ID))) % 3) - 1) > 10 THEN 10
+                        ELSE @Base6 + ((ABS(CHECKSUM(CONCAT(@Eval6Id, '|', p.Pregunta_ID))) % 3) - 1)
+                    END
+                FROM @Preguntas p;
+            END
+
+            SET @MesAcumulado += 6;
+        END
+
+        -- Si reprobó 3 o 4 meses => inactivo por despido bajo desempeño
+        IF @ReprobadoPrueba = 1
+           AND (
+                UPPER(ISNULL(@NombrePerfilActual, '')) LIKE '%EMPLEADO%'
+                OR UPPER(ISNULL(@NombrePerfilActual, '')) LIKE '%JEFE%'
+           )
+           AND LOWER(ISNULL(@NombreUsuarioActual, '')) NOT LIKE '%.demo@patitos.sa'
+        BEGIN
+            UPDATE Empleados
+            SET Estado = 'INACTIVO'
+            WHERE Empleado_ID = @EmpleadoId
+              AND UPPER(ISNULL(Estado, '')) <> 'INACTIVO';
+        END
+
+        FETCH NEXT FROM cur INTO @EmpleadoId, @UsuarioEmpleadoId, @FechaIngreso, @NombrePerfilActual, @NombreUsuarioActual;
+    END
+
+    CLOSE cur;
+    DEALLOCATE cur;
+
+    COMMIT TRAN;
+
+    PRINT 'Seed histórico de evaluaciones aplicado correctamente.';
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0
+        ROLLBACK TRAN;
+
+    PRINT ERROR_MESSAGE();
+    THROW;
+END CATCH;

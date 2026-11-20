@@ -1,0 +1,330 @@
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+
+BEGIN TRY
+    BEGIN TRAN;
+
+    -- IMPORTANTE: usar VARCHAR para que HASHBYTES coincida con el hash UTF-8 del login en C#
+    DECLARE @PasswordPlano VARCHAR(200) = 'Patitos#2024';
+    DECLARE @HashBin VARBINARY(32) = HASHBYTES('SHA2_256', @PasswordPlano);
+    DECLARE @PasswordHash NVARCHAR(200) = CAST(N'' AS XML).value('xs:base64Binary(sql:variable("@HashBin"))', 'NVARCHAR(200)');
+
+    -- =========================
+    -- Perfiles base
+    -- =========================
+    IF NOT EXISTS (SELECT 1 FROM Perfiles WHERE UPPER(Nombre_Perfil) = 'EMPLEADO')
+        INSERT INTO Perfiles (Nombre_Perfil, Descripcion) VALUES ('Empleado', 'Empleado estándar');
+
+    IF NOT EXISTS (SELECT 1 FROM Perfiles WHERE UPPER(Nombre_Perfil) LIKE '%JEFE%')
+        INSERT INTO Perfiles (Nombre_Perfil, Descripcion) VALUES ('Jefe Directo', 'Jefe de equipo');
+
+    IF NOT EXISTS (SELECT 1 FROM Perfiles WHERE UPPER(Nombre_Perfil) = 'GERENTE')
+        INSERT INTO Perfiles (Nombre_Perfil, Descripcion) VALUES ('Gerente', 'Gerente de área');
+
+    IF NOT EXISTS (SELECT 1 FROM Perfiles WHERE UPPER(Nombre_Perfil) LIKE '%GERENTE GENERAL%' OR UPPER(Nombre_Perfil) LIKE '%DIRECTOR GENERAL%')
+        INSERT INTO Perfiles (Nombre_Perfil, Descripcion) VALUES ('Gerente General', 'Dirección general');
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM Perfiles
+        WHERE UPPER(Nombre_Perfil) LIKE '%NOMINA%'
+           OR UPPER(Nombre_Perfil) LIKE '%NÓMINA%'
+           OR UPPER(Nombre_Perfil) LIKE '%NÃ%MINA%'
+           OR UPPER(Nombre_Perfil) LIKE 'ANALISTA DE N%MINA'
+    )
+        INSERT INTO Perfiles (Nombre_Perfil, Descripcion) VALUES ('Analista de Nómina', 'Analista de nómina');
+
+    IF NOT EXISTS (SELECT 1 FROM Perfiles WHERE UPPER(Nombre_Perfil) LIKE '%ADMIN%')
+        INSERT INTO Perfiles (Nombre_Perfil, Descripcion) VALUES ('Administrador', 'Administrador de sistema');
+
+    DECLARE @PerfilEmpleadoId INT = (SELECT TOP 1 Perfil_ID FROM Perfiles WHERE UPPER(Nombre_Perfil) = 'EMPLEADO');
+    DECLARE @PerfilJefeId INT = (SELECT TOP 1 Perfil_ID FROM Perfiles WHERE UPPER(Nombre_Perfil) LIKE '%JEFE%');
+    DECLARE @PerfilGerenteId INT = (SELECT TOP 1 Perfil_ID FROM Perfiles WHERE UPPER(Nombre_Perfil) = 'GERENTE');
+    DECLARE @PerfilGerenteGeneralId INT = (
+        SELECT TOP 1 Perfil_ID FROM Perfiles
+        WHERE UPPER(Nombre_Perfil) LIKE '%GERENTE GENERAL%' OR UPPER(Nombre_Perfil) LIKE '%DIRECTOR GENERAL%'
+    );
+    DECLARE @PerfilNominaId INT = (
+        SELECT TOP 1 Perfil_ID
+        FROM Perfiles
+        WHERE UPPER(Nombre_Perfil) LIKE '%NOMINA%'
+           OR UPPER(Nombre_Perfil) LIKE '%NÓMINA%'
+           OR UPPER(Nombre_Perfil) LIKE '%NÃ%MINA%'
+           OR UPPER(Nombre_Perfil) LIKE 'ANALISTA DE N%MINA'
+    );
+
+    IF @PerfilEmpleadoId IS NULL
+        SET @PerfilEmpleadoId = (SELECT TOP 1 Perfil_ID FROM Perfiles ORDER BY Perfil_ID);
+    IF @PerfilJefeId IS NULL
+        SET @PerfilJefeId = @PerfilEmpleadoId;
+    IF @PerfilGerenteId IS NULL
+        SET @PerfilGerenteId = @PerfilJefeId;
+    IF @PerfilGerenteGeneralId IS NULL
+        SET @PerfilGerenteGeneralId = @PerfilGerenteId;
+    IF @PerfilNominaId IS NULL
+        SET @PerfilNominaId = @PerfilEmpleadoId;
+
+    DECLARE @PuestoEmpleadoId INT = (SELECT TOP 1 Puesto_ID FROM Puestos ORDER BY Puesto_ID);
+    DECLARE @PuestoJefeId INT = (SELECT TOP 1 Puesto_ID FROM Puestos WHERE UPPER(Nombre_Puesto) LIKE '%JEFE%' ORDER BY Puesto_ID);
+    DECLARE @PuestoGerenteId INT = (SELECT TOP 1 Puesto_ID FROM Puestos WHERE UPPER(Nombre_Puesto) LIKE '%GERENTE%' ORDER BY Puesto_ID);
+    DECLARE @PuestoGerenteGeneralId INT = (SELECT TOP 1 Puesto_ID FROM Puestos WHERE UPPER(Nombre_Puesto) LIKE '%GENERAL%' ORDER BY Puesto_ID);
+    DECLARE @PuestoNominaId INT = (SELECT TOP 1 Puesto_ID FROM Puestos WHERE UPPER(Nombre_Puesto) LIKE '%NOMINA%' OR UPPER(Nombre_Puesto) LIKE '%NÓMINA%' ORDER BY Puesto_ID);
+
+    SET @PuestoJefeId = ISNULL(@PuestoJefeId, @PuestoEmpleadoId);
+    SET @PuestoGerenteId = ISNULL(@PuestoGerenteId, @PuestoJefeId);
+    SET @PuestoGerenteGeneralId = ISNULL(@PuestoGerenteGeneralId, @PuestoGerenteId);
+    SET @PuestoNominaId = ISNULL(@PuestoNominaId, @PuestoEmpleadoId);
+
+    DECLARE @HorarioId INT = (SELECT TOP 1 Horario_ID FROM Horarios ORDER BY Horario_ID);
+
+    IF @PuestoEmpleadoId IS NULL OR @HorarioId IS NULL
+        THROW 51000, 'No hay datos base en Puestos/Horarios para crear usuarios demo.', 1;
+
+    -- =========================
+    -- Usuarios
+    -- =========================
+    IF NOT EXISTS (SELECT 1 FROM Usuarios WHERE Nombre_Usuario = 'empleado.demo@patitos.sa')
+        INSERT INTO Usuarios (Nombre_Usuario, Password_Hash, Debe_Cambiar_Clave, Estado, Fecha_Creacion, Ultimo_Acceso)
+        VALUES ('empleado.demo@patitos.sa', @PasswordHash, 0, 'ACTIVO', GETDATE(), NULL);
+
+    IF NOT EXISTS (SELECT 1 FROM Usuarios WHERE Nombre_Usuario = 'jefe.demo@patitos.sa')
+        INSERT INTO Usuarios (Nombre_Usuario, Password_Hash, Debe_Cambiar_Clave, Estado, Fecha_Creacion, Ultimo_Acceso)
+        VALUES ('jefe.demo@patitos.sa', @PasswordHash, 0, 'ACTIVO', GETDATE(), NULL);
+
+    IF NOT EXISTS (SELECT 1 FROM Usuarios WHERE Nombre_Usuario = 'gerente.demo@patitos.sa')
+        INSERT INTO Usuarios (Nombre_Usuario, Password_Hash, Debe_Cambiar_Clave, Estado, Fecha_Creacion, Ultimo_Acceso)
+        VALUES ('gerente.demo@patitos.sa', @PasswordHash, 0, 'ACTIVO', GETDATE(), NULL);
+
+    IF NOT EXISTS (SELECT 1 FROM Usuarios WHERE Nombre_Usuario = 'gerentegeneral.demo@patitos.sa')
+        INSERT INTO Usuarios (Nombre_Usuario, Password_Hash, Debe_Cambiar_Clave, Estado, Fecha_Creacion, Ultimo_Acceso)
+        VALUES ('gerentegeneral.demo@patitos.sa', @PasswordHash, 0, 'ACTIVO', GETDATE(), NULL);
+
+    IF NOT EXISTS (SELECT 1 FROM Usuarios WHERE Nombre_Usuario = 'nomina.demo@patitos.sa')
+        INSERT INTO Usuarios (Nombre_Usuario, Password_Hash, Debe_Cambiar_Clave, Estado, Fecha_Creacion, Ultimo_Acceso)
+        VALUES ('nomina.demo@patitos.sa', @PasswordHash, 0, 'ACTIVO', GETDATE(), NULL);
+
+    -- Si ya existían, forzar hash/estado correcto para evitar error de login
+    UPDATE Usuarios
+    SET Password_Hash = @PasswordHash,
+        Debe_Cambiar_Clave = 0,
+        Estado = 'ACTIVO'
+    WHERE Nombre_Usuario IN (
+        'empleado.demo@patitos.sa',
+        'jefe.demo@patitos.sa',
+        'gerente.demo@patitos.sa',
+        'gerentegeneral.demo@patitos.sa',
+        'nomina.demo@patitos.sa'
+    );
+
+    DECLARE @UsuarioEmpleadoId INT = (SELECT Usuario_ID FROM Usuarios WHERE Nombre_Usuario = 'empleado.demo@patitos.sa');
+    DECLARE @UsuarioJefeId INT = (SELECT Usuario_ID FROM Usuarios WHERE Nombre_Usuario = 'jefe.demo@patitos.sa');
+    DECLARE @UsuarioGerenteId INT = (SELECT Usuario_ID FROM Usuarios WHERE Nombre_Usuario = 'gerente.demo@patitos.sa');
+    DECLARE @UsuarioGerenteGeneralId INT = (SELECT Usuario_ID FROM Usuarios WHERE Nombre_Usuario = 'gerentegeneral.demo@patitos.sa');
+    DECLARE @UsuarioNominaId INT = (SELECT Usuario_ID FROM Usuarios WHERE Nombre_Usuario = 'nomina.demo@patitos.sa');
+
+    -- =========================
+    -- Empleados (ingreso 2024)
+    -- =========================
+    IF NOT EXISTS (SELECT 1 FROM Empleados WHERE Usuario_ID = @UsuarioEmpleadoId)
+        INSERT INTO Empleados (Usuario_ID, Perfil_ID, Puesto_ID, Horario_ID, Cedula, Fecha_Ingreso, Fotografia_Url, Estado, Fecha_Registro)
+        VALUES (@UsuarioEmpleadoId, @PerfilEmpleadoId, @PuestoEmpleadoId, @HorarioId, '900100001', '2024-01-15', '', 'ACTIVO', GETDATE());
+
+    IF NOT EXISTS (SELECT 1 FROM Empleados WHERE Usuario_ID = @UsuarioJefeId)
+        INSERT INTO Empleados (Usuario_ID, Perfil_ID, Puesto_ID, Horario_ID, Cedula, Fecha_Ingreso, Fotografia_Url, Estado, Fecha_Registro)
+        VALUES (@UsuarioJefeId, @PerfilJefeId, @PuestoJefeId, @HorarioId, '900100002', '2024-01-15', '', 'ACTIVO', GETDATE());
+
+    IF NOT EXISTS (SELECT 1 FROM Empleados WHERE Usuario_ID = @UsuarioGerenteId)
+        INSERT INTO Empleados (Usuario_ID, Perfil_ID, Puesto_ID, Horario_ID, Cedula, Fecha_Ingreso, Fotografia_Url, Estado, Fecha_Registro)
+        VALUES (@UsuarioGerenteId, @PerfilGerenteId, @PuestoGerenteId, @HorarioId, '900100003', '2024-01-15', '', 'ACTIVO', GETDATE());
+
+    IF NOT EXISTS (SELECT 1 FROM Empleados WHERE Usuario_ID = @UsuarioGerenteGeneralId)
+        INSERT INTO Empleados (Usuario_ID, Perfil_ID, Puesto_ID, Horario_ID, Cedula, Fecha_Ingreso, Fotografia_Url, Estado, Fecha_Registro)
+        VALUES (@UsuarioGerenteGeneralId, @PerfilGerenteGeneralId, @PuestoGerenteGeneralId, @HorarioId, '900100004', '2024-01-15', '', 'ACTIVO', GETDATE());
+
+    IF NOT EXISTS (SELECT 1 FROM Empleados WHERE Usuario_ID = @UsuarioNominaId)
+        INSERT INTO Empleados (Usuario_ID, Perfil_ID, Puesto_ID, Horario_ID, Cedula, Fecha_Ingreso, Fotografia_Url, Estado, Fecha_Registro)
+        VALUES (@UsuarioNominaId, @PerfilNominaId, @PuestoNominaId, @HorarioId, '900100005', '2024-01-15', '', 'ACTIVO', GETDATE());
+
+    -- Si existen con datos nulos en columnas no-nullable del modelo, corregir
+    UPDATE e
+    SET e.Fotografia_Url = ISNULL(e.Fotografia_Url, '')
+    FROM Empleados e
+    WHERE e.Usuario_ID IN (@UsuarioEmpleadoId, @UsuarioJefeId, @UsuarioGerenteId, @UsuarioGerenteGeneralId, @UsuarioNominaId)
+      AND e.Fotografia_Url IS NULL;
+
+    UPDATE Colillas_Pago
+    SET Ruta_PDF = ISNULL(Ruta_PDF, '')
+    WHERE Ruta_PDF IS NULL;
+
+    DECLARE @EmpEmpleadoId INT = (SELECT Empleado_ID FROM Empleados WHERE Usuario_ID = @UsuarioEmpleadoId);
+    DECLARE @EmpJefeId INT = (SELECT Empleado_ID FROM Empleados WHERE Usuario_ID = @UsuarioJefeId);
+    DECLARE @EmpGerenteId INT = (SELECT Empleado_ID FROM Empleados WHERE Usuario_ID = @UsuarioGerenteId);
+    DECLARE @EmpGerenteGeneralId INT = (SELECT Empleado_ID FROM Empleados WHERE Usuario_ID = @UsuarioGerenteGeneralId);
+    DECLARE @EmpNominaId INT = (SELECT Empleado_ID FROM Empleados WHERE Usuario_ID = @UsuarioNominaId);
+
+    -- =========================
+    -- Información personal
+    -- =========================
+    IF NOT EXISTS (SELECT 1 FROM Informacion_Personal WHERE Empleado_ID = @EmpEmpleadoId)
+        INSERT INTO Informacion_Personal (Empleado_ID, Nombre_Empleado, Primer_Nombre, Segundo_Nombre, Apellido_Paterno, Apellido_Materno, Fecha_Nacimiento, Genero, Estado_Civil, Pais_Demografico, Fecha_Actualizacion)
+        VALUES (@EmpEmpleadoId, 'Zunorabl Zunorabm Zunorax', 'Zunorabl', 'Zunorabm', 'Zunorax', 'Zunoray', '1995-03-10', 'M', 'SOLTERO', 'COSTA RICA', GETDATE());
+
+    IF NOT EXISTS (SELECT 1 FROM Informacion_Personal WHERE Empleado_ID = @EmpJefeId)
+        INSERT INTO Informacion_Personal (Empleado_ID, Nombre_Empleado, Primer_Nombre, Segundo_Nombre, Apellido_Paterno, Apellido_Materno, Fecha_Nacimiento, Genero, Estado_Civil, Pais_Demografico, Fecha_Actualizacion)
+        VALUES (@EmpJefeId, 'Zunoraz Zunorabm Zunorax', 'Zunoraz', 'Zunorabm', 'Zunorax', 'Zunoray', '1990-07-18', 'M', 'CASADO', 'COSTA RICA', GETDATE());
+
+    IF NOT EXISTS (SELECT 1 FROM Informacion_Personal WHERE Empleado_ID = @EmpGerenteId)
+        INSERT INTO Informacion_Personal (Empleado_ID, Nombre_Empleado, Primer_Nombre, Segundo_Nombre, Apellido_Paterno, Apellido_Materno, Fecha_Nacimiento, Genero, Estado_Civil, Pais_Demografico, Fecha_Actualizacion)
+        VALUES (@EmpGerenteId, 'Zunorav Zunorabm Zunorax', 'Zunorav', 'Zunorabm', 'Zunorax', 'Zunoray', '1988-04-12', 'F', 'CASADO', 'COSTA RICA', GETDATE());
+
+    IF NOT EXISTS (SELECT 1 FROM Informacion_Personal WHERE Empleado_ID = @EmpGerenteGeneralId)
+        INSERT INTO Informacion_Personal (Empleado_ID, Nombre_Empleado, Primer_Nombre, Segundo_Nombre, Apellido_Paterno, Apellido_Materno, Fecha_Nacimiento, Genero, Estado_Civil, Pais_Demografico, Fecha_Actualizacion)
+        VALUES (@EmpGerenteGeneralId, 'Zunorabn Zunorabo Zunorax', 'Zunorabn', 'Zunorabo', 'Zunorax', 'Zunoray', '1982-01-25', 'M', 'CASADO', 'COSTA RICA', GETDATE());
+
+    IF NOT EXISTS (SELECT 1 FROM Informacion_Personal WHERE Empleado_ID = @EmpNominaId)
+        INSERT INTO Informacion_Personal (Empleado_ID, Nombre_Empleado, Primer_Nombre, Segundo_Nombre, Apellido_Paterno, Apellido_Materno, Fecha_Nacimiento, Genero, Estado_Civil, Pais_Demografico, Fecha_Actualizacion)
+        VALUES (@EmpNominaId, 'Zunorabp Zunorabq Zunorax', 'Zunorabp', 'Zunorabq', 'Zunorax', 'Zunoray', '1992-09-02', 'F', 'SOLTERO', 'COSTA RICA', GETDATE());
+
+    -- =========================
+    -- Jerarquía organizacional
+    -- =========================
+    IF OBJECT_ID('dbo.Estructura_Organizacional', 'U') IS NOT NULL
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM Estructura_Organizacional WHERE Empleado_ID = @EmpEmpleadoId AND Jefe_Empleado_ID = @EmpJefeId)
+            INSERT INTO Estructura_Organizacional (Empleado_ID, Jefe_Empleado_ID, Nivel, Gerencia_Departamento_ID, Area_Departamento_ID, Fecha_Registro)
+            VALUES (@EmpEmpleadoId, @EmpJefeId, 3, NULL, NULL, GETDATE());
+
+        IF NOT EXISTS (SELECT 1 FROM Estructura_Organizacional WHERE Empleado_ID = @EmpJefeId AND Jefe_Empleado_ID = @EmpGerenteId)
+            INSERT INTO Estructura_Organizacional (Empleado_ID, Jefe_Empleado_ID, Nivel, Gerencia_Departamento_ID, Area_Departamento_ID, Fecha_Registro)
+            VALUES (@EmpJefeId, @EmpGerenteId, 2, NULL, NULL, GETDATE());
+
+        IF NOT EXISTS (SELECT 1 FROM Estructura_Organizacional WHERE Empleado_ID = @EmpGerenteId AND Jefe_Empleado_ID = @EmpGerenteGeneralId)
+            INSERT INTO Estructura_Organizacional (Empleado_ID, Jefe_Empleado_ID, Nivel, Gerencia_Departamento_ID, Area_Departamento_ID, Fecha_Registro)
+            VALUES (@EmpGerenteId, @EmpGerenteGeneralId, 1, NULL, NULL, GETDATE());
+
+        IF NOT EXISTS (SELECT 1 FROM Estructura_Organizacional WHERE Empleado_ID = @EmpNominaId AND Jefe_Empleado_ID = @EmpGerenteGeneralId)
+            INSERT INTO Estructura_Organizacional (Empleado_ID, Jefe_Empleado_ID, Nivel, Gerencia_Departamento_ID, Area_Departamento_ID, Fecha_Registro)
+            VALUES (@EmpNominaId, @EmpGerenteGeneralId, 2, NULL, NULL, GETDATE());
+    END
+
+    -- =========================
+    -- Asistencia base 2024
+    -- =========================
+    IF NOT EXISTS (SELECT 1 FROM Asistencia WHERE Empleado_ID = @EmpEmpleadoId AND Fecha = '2024-11-27')
+        INSERT INTO Asistencia (Empleado_ID, Fecha, Fecha_Hora_Entrada, Fecha_Hora_Salida, Estado_Asistencia, Observaciones, Fecha_Registro)
+        VALUES (@EmpEmpleadoId, '2024-11-27', '2024-11-27T08:03:00', '2024-11-27T17:40:00', 'PRESENTE', NULL, GETDATE());
+
+    IF NOT EXISTS (SELECT 1 FROM Asistencia WHERE Empleado_ID = @EmpJefeId AND Fecha = '2024-11-27')
+        INSERT INTO Asistencia (Empleado_ID, Fecha, Fecha_Hora_Entrada, Fecha_Hora_Salida, Estado_Asistencia, Observaciones, Fecha_Registro)
+        VALUES (@EmpJefeId, '2024-11-27', '2024-11-27T07:55:00', '2024-11-27T17:15:00', 'PRESENTE', NULL, GETDATE());
+
+    -- =========================
+    -- Ausencias aprobadas por jerarquía
+    -- =========================
+    DECLARE @TipoVacacionesId INT = (SELECT TOP 1 Tipo_Ausencia_ID FROM Tipos_Ausencia WHERE UPPER(Nombre_Ausencia) LIKE '%VACACION%');
+    IF @TipoVacacionesId IS NULL
+        SET @TipoVacacionesId = (SELECT TOP 1 Tipo_Ausencia_ID FROM Tipos_Ausencia ORDER BY Tipo_Ausencia_ID);
+
+    IF NOT EXISTS (SELECT 1 FROM Solicitudes_Ausencia WHERE Empleado_ID = @EmpEmpleadoId AND Fecha_Inicio = '2024-11-14')
+        INSERT INTO Solicitudes_Ausencia (Empleado_ID, Tipo_Ausencia_ID, Fecha_Inicio, Fecha_Fin, Motivo, Comentarios, Estado_Solicitud, Fecha_Solicitud, Aprobador_ID, Fecha_Aprobacion)
+        VALUES (@EmpEmpleadoId, @TipoVacacionesId, '2024-11-14', '2024-11-14', 'Cita personal', 'Aprobada por jefe directo', 'APROBADA', '2024-11-10', @EmpJefeId, '2024-11-11');
+
+    IF NOT EXISTS (SELECT 1 FROM Solicitudes_Ausencia WHERE Empleado_ID = @EmpJefeId AND Fecha_Inicio = '2024-11-18')
+        INSERT INTO Solicitudes_Ausencia (Empleado_ID, Tipo_Ausencia_ID, Fecha_Inicio, Fecha_Fin, Motivo, Comentarios, Estado_Solicitud, Fecha_Solicitud, Aprobador_ID, Fecha_Aprobacion)
+        VALUES (@EmpJefeId, @TipoVacacionesId, '2024-11-18', '2024-11-18', 'Gestión familiar', 'Aprobada por gerente', 'APROBADA', '2024-11-12', @EmpGerenteId, '2024-11-13');
+
+    IF NOT EXISTS (SELECT 1 FROM Solicitudes_Ausencia WHERE Empleado_ID = @EmpGerenteId AND Fecha_Inicio = '2024-11-22')
+        INSERT INTO Solicitudes_Ausencia (Empleado_ID, Tipo_Ausencia_ID, Fecha_Inicio, Fecha_Fin, Motivo, Comentarios, Estado_Solicitud, Fecha_Solicitud, Aprobador_ID, Fecha_Aprobacion)
+        VALUES (@EmpGerenteId, @TipoVacacionesId, '2024-11-22', '2024-11-22', 'Trámite personal', 'Aprobada por gerente general', 'APROBADA', '2024-11-15', @EmpGerenteGeneralId, '2024-11-16');
+
+    -- =========================
+    -- Planillas y colillas pagadas (desde 2024-01 hasta último mes pagado)
+    -- =========================
+    DECLARE @Hoy DATE = CAST(GETDATE() AS DATE);
+    DECLARE @UltimoMesPagadoFin DATE = CASE
+        WHEN DAY(@Hoy) >= 28 THEN EOMONTH(@Hoy)
+        ELSE EOMONTH(DATEADD(MONTH, -1, @Hoy))
+    END;
+    DECLARE @PeriodoInicio DATE = '2024-01-01';
+
+    DECLARE @ColillasSeed TABLE
+    (
+        Empleado_ID INT,
+        Salario_Puesto DECIMAL(18,2),
+        Pago_CCSS DECIMAL(18,2)
+    );
+
+    INSERT INTO @ColillasSeed (Empleado_ID, Salario_Puesto, Pago_CCSS)
+    SELECT
+        e.Empleado_ID,
+        CAST(ISNULL(p.Salario_Base, 1500000) AS DECIMAL(18,2)) AS Salario_Puesto,
+        CAST(ROUND(ISNULL(p.Salario_Base, 1500000) * 0.1067, 2) AS DECIMAL(18,2)) AS Pago_CCSS
+    FROM Empleados e
+    LEFT JOIN Puestos p ON p.Puesto_ID = e.Puesto_ID
+    WHERE CAST(ISNULL(e.Fecha_Ingreso, GETDATE()) AS DATE) <= @UltimoMesPagadoFin;
+
+    WHILE @PeriodoInicio <= @UltimoMesPagadoFin
+    BEGIN
+        DECLARE @PeriodoFin DATE = EOMONTH(@PeriodoInicio);
+        DECLARE @FechaGeneracion DATE = DATEFROMPARTS(YEAR(@PeriodoInicio), MONTH(@PeriodoInicio), 27);
+        DECLARE @FechaPago DATE = DATEFROMPARTS(YEAR(@PeriodoInicio), MONTH(@PeriodoInicio), 28);
+
+        DECLARE @PlanillaId BIGINT = (
+            SELECT TOP 1 Planilla_ID
+            FROM Planillas
+            WHERE Periodo_Inicio = @PeriodoInicio AND Periodo_Fin = @PeriodoFin
+            ORDER BY Planilla_ID DESC
+        );
+
+        IF @PlanillaId IS NULL
+        BEGIN
+            INSERT INTO Planillas (Periodo_Inicio, Periodo_Fin, Fecha_Generacion, Usuario_Generador_ID, Estado)
+            VALUES (@PeriodoInicio, @PeriodoFin, @FechaGeneracion, @UsuarioNominaId, 'ENVIADA');
+
+            SET @PlanillaId = SCOPE_IDENTITY();
+        END
+
+        INSERT INTO Colillas_Pago
+        (
+            Planilla_ID,
+            Empleado_ID,
+            Pago_CCSS,
+            Exoneraciones,
+            Deducciones_Ausencias,
+            Salario_Puesto,
+            Salario_Neto,
+            Ruta_PDF,
+            Fecha_Envio,
+            Estado_Envio
+        )
+        SELECT
+            @PlanillaId,
+            s.Empleado_ID,
+            s.Pago_CCSS,
+            0,
+            0,
+            s.Salario_Puesto,
+            s.Salario_Puesto - s.Pago_CCSS,
+            '',
+            @FechaPago,
+            'ENVIADO'
+        FROM @ColillasSeed s
+        WHERE NOT EXISTS
+        (
+            SELECT 1
+            FROM Colillas_Pago c
+            WHERE c.Planilla_ID = @PlanillaId
+              AND c.Empleado_ID = s.Empleado_ID
+        );
+
+        SET @PeriodoInicio = DATEADD(MONTH, 1, @PeriodoInicio);
+    END
+
+    COMMIT TRAN;
+    PRINT 'Seed jerárquico de usuarios demo aplicado correctamente.';
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0 ROLLBACK TRAN;
+    PRINT ERROR_MESSAGE();
+    THROW;
+END CATCH;
